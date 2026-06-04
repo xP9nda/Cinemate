@@ -1,0 +1,190 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Serif+Display:ital@0;1&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Cinemate Dark Theme (default) */
+    --background: 228 22% 12%;       /* #1a1d27 */
+    --foreground: 250 29% 91%;       /* #e8e6f0 */
+    --card: 228 25% 18%;             /* #22263a */
+    --card-foreground: 250 29% 91%;
+    --popover: 228 25% 18%;
+    --popover-foreground: 250 29% 91%;
+    --primary: 262 33% 66%;          /* #9b8ec4 lavender */
+    --primary-foreground: 228 22% 12%;
+    --secondary: 228 21% 21%;        /* #2a2d3e */
+    --secondary-foreground: 250 29% 91%;
+    --muted: 228 21% 21%;
+    --muted-foreground: 249 11% 45%; /* #6a677f */
+    --accent: 262 33% 66%;
+    --accent-foreground: 228 22% 12%;
+    --destructive: 0 62% 66%;        /* #e07070 */
+    --destructive-foreground: 250 29% 91%;
+    --border: 228 20% 24%;
+    --input: 228 21% 21%;
+    --ring: 262 33% 66%;
+    --radius: 0.75rem;
+    --teal: 176 53% 55%;             /* #4ecdc4 */
+    --teal-foreground: 228 22% 12%;
+    --success: 155 60% 60%;          /* #56d9a0 */
+    --warning: 44 84% 59%;           /* #f0c040 */
+    --info: 205 60% 66%;             /* #70b8e0 */
+
+    /* Sidebar */
+    --sidebar-width: 220px;
+    --titlebar-height: 38px;
+  }
+
+  .light {
+    --background: 250 20% 97%;       /* #f4f3f8 */
+    --foreground: 249 25% 13%;       /* #18172a */
+    --card: 0 0% 100%;
+    --card-foreground: 249 25% 13%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 249 25% 13%;
+    --primary: 262 33% 55%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 250 20% 93%;
+    --secondary-foreground: 249 25% 13%;
+    --muted: 250 20% 93%;
+    --muted-foreground: 249 11% 55%;
+    --accent: 262 33% 55%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 62% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 250 20% 88%;
+    --input: 250 20% 93%;
+    --ring: 262 33% 55%;
+  }
+
+  * {
+    @apply border-border;
+    box-sizing: border-box;
+  }
+
+  html, body, #root {
+    height: 100%;
+    overflow: hidden;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans;
+    font-size: 15px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    user-select: none;
+  }
+
+  /* Scrollbars */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-muted rounded-full;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-muted-foreground/40;
+  }
+
+  /* Focus ring */
+  *:focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+
+  /* Selection */
+  ::selection {
+    @apply bg-primary/30 text-foreground;
+  }
+
+  /* Drag region for titlebar */
+  .titlebar-drag {
+    -webkit-app-region: drag;
+  }
+  .titlebar-no-drag {
+    -webkit-app-region: no-drag;
+  }
+}
+
+@layer components {
+  /* Skeleton shimmer */
+  .skeleton {
+    @apply rounded-md;
+    background: linear-gradient(
+      90deg,
+      hsl(var(--muted)) 25%,
+      hsl(var(--muted-foreground) / 0.15) 50%,
+      hsl(var(--muted)) 75%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 2s linear infinite;
+  }
+
+  /* Scrollable row */
+  .scroll-row {
+    @apply flex gap-3 overflow-x-auto pb-2;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+  }
+  .scroll-row::-webkit-scrollbar {
+    display: none;
+  }
+  .scroll-row > * {
+    scroll-snap-align: start;
+    flex-shrink: 0;
+  }
+
+  /* View container */
+  .view-container {
+    @apply animate-fade-in min-w-0 w-full overflow-x-hidden;
+  }
+
+  /* Radix ScrollArea wraps children in display:table which grows to content width.
+     Override to block so it's constrained to the scroll area's viewport width. */
+  [data-radix-scroll-area-viewport] > div {
+    display: block !important;
+    min-width: 0 !important;
+    width: 100%;
+  }
+
+  /* Spoiler blur */
+  .spoiler-blur {
+    filter: blur(5px);
+    transition: filter 0.25s ease;
+    cursor: pointer;
+    user-select: none;
+    border-radius: 2px;
+  }
+  .spoiler-blur.revealed {
+    filter: blur(0);
+  }
+
+  /* Section heading */
+  .section-heading {
+    @apply font-serif text-2xl font-normal text-foreground mb-4;
+  }
+
+  /* Stat card */
+  .stat-card {
+    @apply flex flex-col gap-1 rounded-xl bg-card p-4 border border-border/50;
+  }
+
+  /* Activity bar */
+  .activity-bar {
+    @apply h-4 rounded-sm min-w-[3px] transition-colors;
+    background: hsl(var(--primary) / 0.4);
+  }
+  .activity-bar:hover {
+    background: hsl(var(--primary));
+  }
+  .activity-bar.has-activity {
+    background: hsl(var(--primary) / 0.7);
+  }
+}
