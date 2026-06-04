@@ -297,6 +297,92 @@ export class MediaActions {
     await this.get().setLibraryEntry({ ...base, status, watchedDate, tvProgress: progress })
   }
 
+  /**
+   * View-time reconciliation of the "caught up" state. Being caught up is
+   * inherently time-dependent - a show with every aired episode watched is
+   * caught up today but stops being so the moment a new episode airs - so it
+   * can't be settled once at episode-log time. The Continue Watching card calls
+   * this when it resolves a next-up episode that hasn't aired yet: with
+   * markCaughtUpAsWatched on, a show whose every aired episode is watched flips
+   * to 'watched' (and so drops out of Continue Watching / In Progress); with the
+   * setting off it's a no-op. deriveShowStatus stays the arbiter, so a show with
+   * earlier unwatched aired episodes (skipped, not actually caught up) is left
+   * in_progress. Only writes when the status actually changes.
+   */
+  async reconcileCaughtUp(target: MediaTarget): Promise<void> {
+    const settings = this.get().settings
+    if (!settings.markCaughtUpAsWatched) return
+    const entry = this.get().library[idOf(target)]
+    if (!entry || entry.mediaType === 'movie' || entry.status !== 'in_progress') return
+    const catalog = await this.episodeCatalogFor(target)
+    const status = deriveShowStatus({
+      existingStatus: entry.status,
+      progress: entry.tvProgress ?? {},
+      episodeCatalog: catalog,
+      settings,
+    })
+    if (status !== 'watched') return
+    const watchedDate = latestPlayDate(this.get().watchHistory, entry.id) ?? entry.watchedDate
+    await this.get().setLibraryEntry({ ...entry, status, watchedDate })
+  }
+
+  /**
+   * The inverse of reconcileCaughtUp: revive a 'watched' show to 'in_progress'
+   * once an episode it hasn't watched has aired. A show flipped to watched while
+   * caught up (or finished normally) would otherwise stay buried in Watched when
+   * a new episode airs, never resurfacing in Continue Watching - this scan, run
+   * best-effort on launch, brings it back. Gated on markCaughtUpAsWatched so it
+   * only applies to users who opted into the caught-up-as-watched model (and so
+   * never demotes a deliberately-watched show for someone who didn't).
+   *
+   * Cost is kept down with a cheap per-show pre-filter: getTV's season summaries
+   * give a catalogue episode count without fetching any season, and a show whose
+   * catalogue isn't larger than the user's watched count can't have a new aired
+   * episode, so its per-season fetch is skipped entirely. Only still-growing
+   * shows pay for the full catalogue read. deriveShowStatus can't drive this -
+   * it deliberately never demotes a watched show - so the aired-but-unwatched
+   * check lives here.
+   */
+  async reconcileAiredSinceWatched(): Promise<void> {
+    const settings = this.get().settings
+    if (!settings.markCaughtUpAsWatched || !settings.apiKey) return
+    const today = nowLocalDT().slice(0, 10)
+    const candidates = Object.values(this.get().library).filter(
+      (e) => e.status === 'watched'
+        && (e.mediaType === 'tv' || e.mediaType === 'anime')
+        && !!e.tvProgress && Object.values(e.tvProgress).some((p) => p.watchedAt),
+    )
+    if (candidates.length === 0) return
+
+    const revive = async (entry: LibraryEntry): Promise<void> => {
+      try {
+        const tv = await getTV(entry.tmdbId)
+        const realSeasons = tv.seasons.filter((s) => s.season_number > 0)
+        const catalogTotal = realSeasons.reduce((n, s) => n + s.episode_count, 0)
+        const watchedCount = Object.values(entry.tvProgress ?? {}).filter((p) => p.watchedAt).length
+        // Catalogue counts include unaired episodes, so this only ever over-fetches
+        // for still-airing shows - it never skips one that has a newly-aired episode.
+        if (catalogTotal <= watchedCount) return
+        const seasons = await fetchSeasonsThrottled(entry.tmdbId, realSeasons.map((s) => s.season_number), 4)
+        const hasAiredUnwatched = catalogFromSeasons(seasons).some(
+          (ep) => ep.airDate && ep.airDate <= today && !entry.tvProgress?.[ep.key]?.watchedAt,
+        )
+        if (!hasAiredUnwatched) return
+        // Re-read: a write may have landed (or removed the entry) while we fetched.
+        const cur = this.get().library[entry.id]
+        if (!cur || cur.status !== 'watched') return
+        await this.get().setLibraryEntry({ ...cur, status: 'in_progress' })
+      } catch { /* best-effort: a failed fetch just leaves the show watched */ }
+    }
+
+    // Concurrency-limited so a large watched library doesn't flood the rate limiter.
+    let cursor = 0
+    const worker = async (): Promise<void> => {
+      while (cursor < candidates.length) await revive(candidates[cursor++])
+    }
+    await Promise.all(Array.from({ length: Math.min(4, candidates.length) }, () => worker()))
+  }
+
   /** Log another play of an already-watched episode at the current time (always a rewatch). */
   async replayEpisode(target: MediaTarget, epKey: string, epTitle: string): Promise<void> {
     await this.get().addHistory({

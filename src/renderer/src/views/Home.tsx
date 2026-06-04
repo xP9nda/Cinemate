@@ -17,6 +17,7 @@ export function Home() {
   const watchHistory = useStore(s => s.watchHistory)
   const settings = useStore(s => s.settings)
   const getLibraryByStatus = useStore(s => s.getLibraryByStatus)
+  const reconcileAiredSinceWatched = useStore(s => s.reconcileAiredSinceWatched)
   const [trending, setTrending] = useState<TMDbSearchResult[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -32,6 +33,10 @@ export function Home() {
     [inProgress]
   )
   const watchlist = getLibraryByStatus('watchlist').slice(0, 10)
+
+  // Continue Watching lives here, so re-check on mount whether any caught-up show
+  // has had a new episode air and should return to in_progress (debounced in store).
+  useEffect(() => { reconcileAiredSinceWatched() }, [reconcileAiredSinceWatched])
 
   useEffect(() => {
     if (!settings.apiKey) { setLoading(false); return }

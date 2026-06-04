@@ -3,7 +3,7 @@ import { Tv, Check, Ban, AlertTriangle } from 'lucide-react'
 import { getSeason } from '../../lib/tmdb'
 import { useStore } from '../../lib/store'
 import type { MediaTarget } from '../../lib/mediaActions'
-import { cn, posterUrl } from '../../lib/utils'
+import { cn, posterUrl, nowLocalDT } from '../../lib/utils'
 import { LogEntryModal } from './LogEntryModal'
 import { Tooltip, TooltipTrigger, TooltipContent } from '../ui/tooltip'
 import { toast } from 'sonner'
@@ -28,6 +28,7 @@ interface NextEpInfo {
   season: number
   episode: number
   title: string | null
+  airDate: string | null
 }
 
 interface ContinueWatchingCardProps {
@@ -40,6 +41,8 @@ export function ContinueWatchingCard({ entry, onNavigate, width = 144 }: Continu
   const dropMedia = useStore(s => s.dropMedia)
   const setMediaStatus = useStore(s => s.setStatus)
   const logEpisode = useStore(s => s.logEpisode)
+  const reconcileCaughtUp = useStore(s => s.reconcileCaughtUp)
+  const markCaughtUpAsWatched = useStore(s => s.settings.markCaughtUpAsWatched)
   const target: MediaTarget = {
     mediaType: entry.mediaType,
     tmdbId: entry.tmdbId,
@@ -51,7 +54,7 @@ export function ContinueWatchingCard({ entry, onNavigate, width = 144 }: Continu
     runtime: entry.runtime ?? null,
   }
   const guess = useMemo(() => guessNextEp(entry.tvProgress), [entry.tvProgress])
-  const [nextEp, setNextEp] = useState<NextEpInfo>({ ...guess, title: null })
+  const [nextEp, setNextEp] = useState<NextEpInfo>({ ...guess, title: null, airDate: null })
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [logModalOpen, setLogModalOpen] = useState(false)
 
@@ -64,7 +67,7 @@ export function ContinueWatchingCard({ entry, onNavigate, width = 144 }: Continu
         if (cancelled) return
         const found = season.episodes.find((e) => e.episode_number === guess.episode)
         if (found) {
-          setNextEp({ season: guess.season, episode: guess.episode, title: found.name })
+          setNextEp({ season: guess.season, episode: guess.episode, title: found.name, airDate: found.air_date })
           setStatus('ready')
           return
         }
@@ -74,13 +77,13 @@ export function ContinueWatchingCard({ entry, onNavigate, width = 144 }: Continu
         // so a failed next-season fetch keeps the (correct) episode rather than erroring.
         if (guess.episode > season.episodes.length && season.episodes.length > 0) {
           const nextSeason = guess.season + 1
-          setNextEp({ season: nextSeason, episode: 1, title: null })
+          setNextEp({ season: nextSeason, episode: 1, title: null, airDate: null })
           setStatus('ready')
           try {
             const next = await getSeason(entry.tmdbId, nextSeason)
             if (cancelled) return
             const ep1 = next.episodes.find((e) => e.episode_number === 1) ?? next.episodes[0]
-            if (ep1) setNextEp({ season: nextSeason, episode: ep1.episode_number, title: ep1.name })
+            if (ep1) setNextEp({ season: nextSeason, episode: ep1.episode_number, title: ep1.name, airDate: ep1.air_date })
           } catch { /* keep S(n+1)E01 without a title */ }
           return
         }
@@ -93,6 +96,20 @@ export function ContinueWatchingCard({ entry, onNavigate, width = 144 }: Continu
     load()
     return () => { cancelled = true }
   }, [entry.tmdbId, guess.season, guess.episode])
+
+  // When the resolved next-up episode hasn't aired yet, the user has watched
+  // everything available. Ask the store to settle the show's status: with
+  // markCaughtUpAsWatched on it flips to 'watched' and drops out of Continue
+  // Watching / In Progress; otherwise it's a no-op and the card stays. Re-checked
+  // on each resolution because "caught up" depends on today's date, not just the
+  // state captured when the last episode was logged.
+  useEffect(() => {
+    if (status !== 'ready' || !markCaughtUpAsWatched) return
+    const today = nowLocalDT().slice(0, 10)
+    const unaired = !nextEp.airDate || nextEp.airDate > today
+    if (unaired) void reconcileCaughtUp(target)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, nextEp.airDate, markCaughtUpAsWatched, entry.id])
 
   const watchedCount = useMemo(
     () => Object.values(entry.tvProgress ?? {}).filter((p) => p.watchedAt).length,

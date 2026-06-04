@@ -8,6 +8,16 @@ import { DEFAULT_PAGINATION } from './utils'
 import { MediaActions, buildLibEntry, latestPlayDate, type MediaTarget, type CatalogEpisode, type ListItemRef } from './mediaActions'
 import { computeEntryStats } from './mediaStats'
 
+// Debounce + cooldown for the "aired since watched" scan. Module-scoped so the
+// Home and Library mount triggers share one guard: rapid navigation coalesces
+// into a single trailing run, and the cooldown stops it re-scanning on every
+// visit (episodes air on an hours/days scale, not per navigation).
+const AIRED_SCAN_DEBOUNCE_MS = 800
+const AIRED_SCAN_COOLDOWN_MS = 5 * 60 * 1000
+let airedScanTimer: ReturnType<typeof setTimeout> | null = null
+let airedScanLastRun = 0
+let airedScanInFlight = false
+
 function buildCollectionMediaIds(collection: CollectionEntry[]): Set<string> {
   const set = new Set<string>()
   for (const c of collection) if (c.mediaId) set.add(c.mediaId)
@@ -93,6 +103,10 @@ export interface AppStore {
   undropMedia: (target: MediaTarget) => Promise<void>
   reconcileMovieLog: (target: MediaTarget, histEntry: WatchHistoryEntry) => Promise<void>
   logEpisode: (target: MediaTarget, histEntry: WatchHistoryEntry, episodeCatalog?: CatalogEpisode[]) => Promise<void>
+  reconcileCaughtUp: (target: MediaTarget) => Promise<void>
+  // Debounced + cooldown-throttled scheduler for the "revive watched shows whose
+  // next episode has aired" scan. Views call it freely on mount; it coalesces.
+  reconcileAiredSinceWatched: () => void
   replayEpisode: (target: MediaTarget, epKey: string, epTitle: string) => Promise<void>
   removeEpisodePlays: (target: MediaTarget, epKey: string) => Promise<void>
   logAllEpisodes: (target: MediaTarget, seasons?: TMDbSeason[]) => Promise<void>
@@ -205,6 +219,12 @@ export const useStore = create<AppStore>()(
 
       // Silently restore library entries for any orphaned history records
       repairOrphanedHistory(get, set).catch(() => { /* best-effort */ })
+
+      // Bring caught-up shows back to in_progress once a new episode has aired, so
+      // they resurface in Continue Watching rather than staying buried in Watched.
+      // Goes through the debounced scheduler so the landing view's mount trigger
+      // dedupes against this launch scan instead of running it twice.
+      get().reconcileAiredSinceWatched()
     },
 
     updateSettings: async (patch) => {
@@ -647,6 +667,19 @@ export const useStore = create<AppStore>()(
     undropMedia: (target) => media.undrop(target),
     reconcileMovieLog: (target, histEntry) => media.reconcileMovieLog(target, histEntry),
     logEpisode: (target, histEntry, episodeCatalog) => media.logEpisode(target, histEntry, episodeCatalog),
+    reconcileCaughtUp: (target) => media.reconcileCaughtUp(target),
+    reconcileAiredSinceWatched: () => {
+      if (airedScanTimer) clearTimeout(airedScanTimer)
+      airedScanTimer = setTimeout(() => {
+        airedScanTimer = null
+        // Skip if one is running or one finished within the cooldown window.
+        if (airedScanInFlight || Date.now() - airedScanLastRun < AIRED_SCAN_COOLDOWN_MS) return
+        airedScanInFlight = true
+        media.reconcileAiredSinceWatched()
+          .catch(() => { /* best-effort */ })
+          .finally(() => { airedScanInFlight = false; airedScanLastRun = Date.now() })
+      }, AIRED_SCAN_DEBOUNCE_MS)
+    },
     replayEpisode: (target, epKey, epTitle) => media.replayEpisode(target, epKey, epTitle),
     removeEpisodePlays: (target, epKey) => media.removeEpisodePlays(target, epKey),
     logAllEpisodes: (target, seasons) => media.logAllEpisodes(target, seasons),

@@ -105,6 +105,7 @@ export function Library() {
   const removeLibraryEntry = useStore(s => s.removeLibraryEntry)
   const undoRewatch = useStore(s => s.undoRewatch)
   const undropMedia = useStore(s => s.undropMedia)
+  const reconcileAiredSinceWatched = useStore(s => s.reconcileAiredSinceWatched)
   const initialTab = (TAB_VALUES.includes(searchParams.get('tab') as LibTab) ? searchParams.get('tab') as LibTab : null) ??
     readLS<LibTab>(LS.tab, TAB_VALUES, 'all')
   const [tab, setTab] = useState<LibTab>(initialTab)
@@ -142,6 +143,11 @@ export function Library() {
   }, [])
 
   useEffect(() => { localStorage.setItem(LS.tab, tab) }, [tab])
+  // The Watched and In Progress tabs are where a revived show appears (or vanishes
+  // from), so re-check for newly-aired episodes when either is opened (debounced in store).
+  useEffect(() => {
+    if (tab === 'watched' || tab === 'in_progress') reconcileAiredSinceWatched()
+  }, [tab, reconcileAiredSinceWatched])
   useEffect(() => { localStorage.setItem(LS.search, search) }, [search])
   useEffect(() => { localStorage.setItem(LS.media, mediaFilter) }, [mediaFilter])
   useEffect(() => { localStorage.setItem(sortLSKey(tab), sort) }, [sort, tab])
