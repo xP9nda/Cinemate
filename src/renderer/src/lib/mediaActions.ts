@@ -312,9 +312,15 @@ export class MediaActions {
   async reconcileCaughtUp(target: MediaTarget): Promise<void> {
     const settings = this.get().settings
     if (!settings.markCaughtUpAsWatched) return
+    const existing = this.get().library[idOf(target)]
+    if (!existing || existing.mediaType === 'movie' || existing.status !== 'in_progress') return
+    const catalog = await this.episodeCatalogFor(target)
+    // Re-read after the fetch: a concurrent write (e.g. logging the next episode)
+    // may have changed tvProgress/status while we awaited the catalogue, and
+    // writing the pre-fetch snapshot would revert it. Bail unless it's still an
+    // in_progress show, and derive from the fresh progress.
     const entry = this.get().library[idOf(target)]
     if (!entry || entry.mediaType === 'movie' || entry.status !== 'in_progress') return
-    const catalog = await this.episodeCatalogFor(target)
     const status = deriveShowStatus({
       existingStatus: entry.status,
       progress: entry.tvProgress ?? {},
@@ -359,7 +365,11 @@ export class MediaActions {
         const tv = await getTV(entry.tmdbId)
         const realSeasons = tv.seasons.filter((s) => s.season_number > 0)
         const catalogTotal = realSeasons.reduce((n, s) => n + s.episode_count, 0)
-        const watchedCount = Object.values(entry.tvProgress ?? {}).filter((p) => p.watchedAt).length
+        // Count real-season episodes only (drop "0:*" specials) so this lines up
+        // with catalogTotal - otherwise watched specials inflate the count and a
+        // show with a genuinely aired-but-unwatched real episode gets skipped.
+        const watchedCount = Object.entries(entry.tvProgress ?? {})
+          .filter(([key, p]) => p.watchedAt && Number(key.split(':')[0]) > 0).length
         // Catalogue counts include unaired episodes, so this only ever over-fetches
         // for still-airing shows - it never skips one that has a newly-aired episode.
         if (catalogTotal <= watchedCount) return
@@ -371,7 +381,12 @@ export class MediaActions {
         // Re-read: a write may have landed (or removed the entry) while we fetched.
         const cur = this.get().library[entry.id]
         if (!cur || cur.status !== 'watched') return
-        await this.get().setLibraryEntry({ ...cur, status: 'in_progress' })
+        // Clear any rewatch boundary: a watched show only carries one from a
+        // *completed* rewatch, and reviving it for freshly-aired content starts a
+        // normal in_progress run, not a rewatch - leaving it set would wrongly
+        // surface the show in the Rewatching tab (isRewatching = boundary set &&
+        // in_progress).
+        await this.get().setLibraryEntry({ ...cur, status: 'in_progress', rewatchStartedAt: undefined })
       } catch { /* best-effort: a failed fetch just leaves the show watched */ }
     }
 
