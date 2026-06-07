@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Clock, Trash2, Star, Search, CheckSquare, Square, X, Filter, Edit2, Repeat2, CalendarDays, Grid, List as ListIcon, MessageSquare, Tv, MonitorPlay, Film, Tag, Plus, Check, ListPlus, ArrowUpDown, Clapperboard, Calendar as CalendarIcon } from 'lucide-react'
 import { useStore } from '../lib/store'
-import { cn, posterUrl, fmtDate, fmtRating, fmtRelative, fmtRuntime, uid, resolvePageSize, DEFAULT_PAGINATION } from '../lib/utils'
+import { cn, posterUrl, fmtDate, fmtRating, fmtRelative, fmtRuntime, uid, resolvePageSize, DEFAULT_PAGINATION, effectiveRating } from '../lib/utils'
 import { playMinutes } from '../lib/mediaStats'
 import { EmptyState } from '../components/shared/EmptyState'
 import { Button } from '../components/ui/button'
@@ -310,16 +310,15 @@ export function Log() {
     if (rewatchFilter === 'first') items = items.filter((h) => !h.isRewatch)
     else if (rewatchFilter === 'rewatch') items = items.filter((h) => !!h.isRewatch)
 
-    const effectiveRating = (h: WatchHistoryEntry) =>
-      h.episodeKey ? (library[h.mediaId]?.tvProgress?.[h.episodeKey]?.rating ?? null) : h.rating
+    const ratingOf = (h: WatchHistoryEntry) => effectiveRating(library[h.mediaId], h.episodeKey)
 
-    if (ratingFilter === 'rated') items = items.filter((h) => effectiveRating(h) != null)
-    else if (ratingFilter === 'unrated') items = items.filter((h) => effectiveRating(h) == null)
+    if (ratingFilter === 'rated') items = items.filter((h) => ratingOf(h) != null)
+    else if (ratingFilter === 'unrated') items = items.filter((h) => ratingOf(h) == null)
     else if (typeof ratingFilter === 'string' && ratingFilter.startsWith('=')) {
       const exact = Number(ratingFilter.slice(1))
       if (!Number.isNaN(exact)) {
         items = items.filter((h) => {
-          const r = effectiveRating(h)
+          const r = ratingOf(h)
           return r != null && Math.round(r) === exact
         })
       }
@@ -359,14 +358,11 @@ export function Log() {
       items = items.filter((h) => (h.tags ?? []).includes(tagFilter))
     }
 
-    const getEffectiveRating = (h: WatchHistoryEntry) =>
-      h.episodeKey ? (library[h.mediaId]?.tvProgress?.[h.episodeKey]?.rating ?? null) : h.rating
-
     items.sort((a, b) => {
       if (sortOrder === 'newest') return b.watchedAt - a.watchedAt
       if (sortOrder === 'oldest') return a.watchedAt - b.watchedAt
-      if (sortOrder === 'rating_desc') return (getEffectiveRating(b) ?? -1) - (getEffectiveRating(a) ?? -1)
-      if (sortOrder === 'rating_asc') return (getEffectiveRating(a) ?? 99) - (getEffectiveRating(b) ?? 99)
+      if (sortOrder === 'rating_desc') return (ratingOf(b) ?? -1) - (ratingOf(a) ?? -1)
+      if (sortOrder === 'rating_asc') return (ratingOf(a) ?? 99) - (ratingOf(b) ?? 99)
       return 0
     })
 
@@ -953,8 +949,14 @@ function BulkActionBar({
 
   const applyRating = async (value: number | null) => {
     if (disabled) return
-    await bulkSetHistoryRating(ids, value)
-    toast.success(value == null ? `Cleared rating on ${count} ${plural(count)}` : `Rated ${count} ${plural(count)} ${value}★`)
+    const applied = await bulkSetHistoryRating(ids, value)
+    const n = applied === count ? count : applied
+    const suffix = applied < count ? ` (${count - applied} not in your library yet)` : ''
+    if (applied === 0) {
+      toast.error(`Couldn't rate ${count} ${plural(count)} - not in your library yet`)
+    } else {
+      toast.success((value == null ? `Cleared rating on ${n} ${plural(n)}` : `Rated ${n} ${plural(n)} ${value}★`) + suffix)
+    }
     setRateOpen(false)
   }
 
@@ -1229,9 +1231,7 @@ function DatePicker({ value, onChange, placeholder, minDate, maxDate }: {
 const LogRow = React.memo(function LogRow({ entry, libEntry, ratingSystem, timeFormat, selectMode, selected, onSelect, onNavigate, onEdit, onDelete }: LogRowProps) {
   const imgSrc = libEntry ? posterUrl(libEntry.posterPath, 'w92') : null
   const title = libEntry?.title ?? entry.mediaId
-  const displayRating = entry.episodeKey
-    ? (libEntry?.tvProgress?.[entry.episodeKey]?.rating ?? null)
-    : (entry.rating ?? libEntry?.userRating ?? null)
+  const displayRating = effectiveRating(libEntry, entry.episodeKey)
 
   return (
     <div
@@ -1331,9 +1331,7 @@ interface LogCardProps {
 const LogCard = React.memo(function LogCard({ entry, libEntry, ratingSystem, timeFormat, selectMode, selected, onSelect, onNavigate, onEdit, onDelete }: LogCardProps) {
   const imgSrc = libEntry ? posterUrl(libEntry.posterPath, 'w300') : null
   const title = libEntry?.title ?? entry.mediaId
-  const displayRating = entry.episodeKey
-    ? (libEntry?.tvProgress?.[entry.episodeKey]?.rating ?? null)
-    : (entry.rating ?? libEntry?.userRating ?? null)
+  const displayRating = effectiveRating(libEntry, entry.episodeKey)
   const hasNote = !!entry.note?.trim()
   const isEpisode = !!entry.episodeKey
   const epLabel = entry.episodeKey ? `S${entry.episodeKey.split(':')[0]}E${entry.episodeKey.split(':')[1]}` : null

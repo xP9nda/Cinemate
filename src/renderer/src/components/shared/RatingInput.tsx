@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Star, X } from 'lucide-react'
+import { Star, Trash2 } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import type { RatingSystem } from '../../types'
 
@@ -105,7 +105,7 @@ export function RatingInput({ value, onChange, system = '10star', size = 'md', c
         )
       })}
 
-      {/* Right accessory: rating label + optional clear button */}
+      {/* Right accessory: rating label + destructive remove button */}
       <div className="ml-1 flex items-center gap-1">
         {displayLabel && (
           <span className="text-xs text-muted-foreground tabular-nums leading-none">{displayLabel}</span>
@@ -114,10 +114,10 @@ export function RatingInput({ value, onChange, system = '10star', size = 'md', c
           <button
             type="button"
             onClick={() => onChange(null)}
-            className="text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-            aria-label="Clear rating"
+            className="rounded p-0.5 text-destructive hover:bg-destructive/10 transition-colors cursor-pointer"
+            aria-label="Remove rating"
           >
-            <X className="h-3 w-3" />
+            <Trash2 className="h-3 w-3" />
           </button>
         )}
       </div>

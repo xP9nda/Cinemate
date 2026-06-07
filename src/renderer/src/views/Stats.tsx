@@ -2,12 +2,12 @@ import React, { useMemo, useState } from 'react'
 import ReactDOM from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { useStore } from '../lib/store'
-import { fmtRating, posterUrl, cn } from '../lib/utils'
+import { fmtRating, posterUrl, cn, ratingDateProxy, parseDateMs } from '../lib/utils'
 import { playMinutes } from '../lib/mediaStats'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, CartesianGrid, ReferenceLine,
-  LineChart, Line
+  LineChart, Line, Legend
 } from 'recharts'
 import { ScrollArea } from '../components/ui/scroll-area'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
@@ -55,6 +55,12 @@ const GENRE_NAMES: Record<number, string> = {
 }
 
 type Period = number | 'all'
+
+// True if `when` falls in the selected period (any time when 'all', else the same
+// calendar year). The single period predicate shared by every rating aggregation.
+function inPeriod(when: string | number | null | undefined, period: Period): boolean {
+  return period === 'all' ? true : when != null && new Date(when).getFullYear() === period
+}
 
 function fmtHours(minutes: number): string {
   const h = Math.floor(minutes / 60)
@@ -159,6 +165,19 @@ export function Stats() {
     [watchHistory, period]
   )
 
+  // Titles with a movie/show-level play in the period - a scoping signal for a
+  // title whose own watchedDate predates a rewatch in this period. Built once and
+  // shared by the rating aggregations (shows are additionally scoped by episode
+  // watchedAt where needed, so this only tracks non-episode plays).
+  const playInPeriod = useMemo(() => {
+    const s = new Set<string>()
+    for (const h of watchHistory) {
+      if (h.episodeKey) continue
+      if (inPeriod(h.watchedAt, period)) s.add(h.mediaId)
+    }
+    return s
+  }, [watchHistory, period])
+
   const moviesWatched = useMemo(
     () => period === 'all'
       ? watched.filter(e => e.mediaType === 'movie').length
@@ -245,27 +264,13 @@ export function Stats() {
   // One rating per distinct thing the user rated - never per play:
   //   • each movie            → its overall rating (userRating)
   //   • each TV / anime show  → its overall rating (userRating)
+  //   • each season           → its rating (seasonRatings[n])
   //   • each episode          → its individual rating (tvProgress[key].rating)
   // All of these live on the library entry, so the distribution is derived from
   // the library rather than from watch history (where a title rated across N
-  // plays would otherwise be counted N times, and episode plays carry no rating
-  // at all). A movie/show with no overall rating falls back to its most recent
-  // rated play so a title rated only from the log isn't dropped. Scoped to the
-  // period by when each thing was actually watched.
+  // plays would otherwise be counted N times, and plays carry no rating at all).
+  // Scoped to the period by when each thing was actually watched.
   const periodRatings = useMemo(() => {
-    const inYear = (when: string | number | null | undefined) =>
-      period === 'all' ? true : when != null && new Date(when).getFullYear() === (period as number)
-
-    // Most recent rated non-episode play per title - the fallback title rating
-    // and a period-scoping signal. watchHistory is newest-first, so first wins.
-    const latestPlayRating = new Map<string, number>()
-    const playInPeriod = new Set<string>()
-    for (const h of watchHistory) {
-      if (h.episodeKey) continue
-      if (h.rating != null && !latestPlayRating.has(h.mediaId)) latestPlayRating.set(h.mediaId, h.rating)
-      if (inYear(h.watchedAt)) playInPeriod.add(h.mediaId)
-    }
-
     const ratings: number[] = []
     for (const e of entries) {
       const isShow = e.mediaType === 'tv' || e.mediaType === 'anime'
@@ -274,24 +279,31 @@ export function Stats() {
       let showWatchedInPeriod = false
       if (isShow) {
         for (const p of Object.values(e.tvProgress ?? {})) {
-          const watchedInYear = inYear(p.watchedAt)
+          const watchedInYear = inPeriod(p.watchedAt, period)
           if (watchedInYear) showWatchedInPeriod = true
           if (p.rating != null && watchedInYear) ratings.push(p.rating)
         }
       }
 
+      const watchedInPeriod = period === 'all'
+        || playInPeriod.has(e.id)
+        || inPeriod(e.watchedDate, period)
+        || showWatchedInPeriod
+
       // One overall rating for the movie/show.
-      if (e.mediaType === 'movie' || isShow) {
-        const titleRating = e.userRating ?? latestPlayRating.get(e.id) ?? null
-        const inPeriod = period === 'all'
-          || playInPeriod.has(e.id)
-          || inYear(e.watchedDate)
-          || showWatchedInPeriod
-        if (titleRating != null && inPeriod) ratings.push(titleRating)
+      if ((e.mediaType === 'movie' || isShow) && e.userRating != null && watchedInPeriod) {
+        ratings.push(e.userRating)
+      }
+
+      // Each rated season (shows only).
+      if (isShow && watchedInPeriod && e.seasonRatings) {
+        for (const v of Object.values(e.seasonRatings)) {
+          if (v != null) ratings.push(v)
+        }
       }
     }
     return ratings
-  }, [entries, watchHistory, period])
+  }, [entries, period, playInPeriod])
 
   const ratingDist = useMemo(() => {
     const dist: Record<number, number> = {}
@@ -330,36 +342,75 @@ export function Stats() {
 
   const ratingOverTime = useMemo(() => {
     const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-    if (period !== 'all') {
-      const data: { sum: number; count: number }[] = new Array(12).fill(null).map(() => ({ sum: 0, count: 0 }))
-      for (const h of periodHistory) {
-        if (h.rating == null) continue
-        const m = new Date(h.watchedAt).getMonth()
-        data[m].sum += h.rating
-        data[m].count++
+    // A rating is one event at one moment, so it lands in exactly one bucket: the
+    // time it was given (userRatingAt / EpisodeProgress.ratedAt / seasonRatedAt,
+    // stamped on write). Sourced from the library, not watch history - a rewatch
+    // never re-counts a rating. Movies, Shows (a show's overall rating), Seasons and
+    // Episodes are tracked on separate lines so one binge can't swamp another.
+    // Combined is the true weighted average over every rating in the bucket.
+    const round1 = (x: number): number => Math.round(x * 10) / 10
+    const bucketOf = (t: number): number => (period === 'all' ? new Date(t).getFullYear() : new Date(t).getMonth())
+    const movieAcc = new Map<number, { sum: number; count: number }>()
+    const showAcc = new Map<number, { sum: number; count: number }>()
+    const seasonAcc = new Map<number, { sum: number; count: number }>()
+    const episodeAcc = new Map<number, { sum: number; count: number }>()
+    const add = (acc: Map<number, { sum: number; count: number }>, bucket: number, r: number): void => {
+      const cur = acc.get(bucket) ?? { sum: 0, count: 0 }
+      cur.sum += r
+      cur.count++
+      acc.set(bucket, cur)
+    }
+    for (const e of entries) {
+      // Overall rating: movies on the Movies line, shows on the Shows line.
+      if (e.userRating != null) {
+        const t = e.userRatingAt ?? ratingDateProxy(e)
+        if (inPeriod(t, period)) add(e.mediaType === 'movie' ? movieAcc : showAcc, bucketOf(t), e.userRating)
       }
-      return data.map((d, i) => ({
-        label: monthNames[i],
-        avg: d.count > 0 ? Math.round((d.sum / d.count) * 10) / 10 : null
-      }))
+      // Individual episode ratings.
+      if (e.tvProgress) {
+        for (const p of Object.values(e.tvProgress)) {
+          if (p.rating == null) continue
+          const t = p.ratedAt ?? parseDateMs(p.watchedAt) ?? ratingDateProxy(e)
+          if (inPeriod(t, period)) add(episodeAcc, bucketOf(t), p.rating)
+        }
+      }
+      // Per-season ratings.
+      if (e.seasonRatings) {
+        for (const [snStr, v] of Object.entries(e.seasonRatings)) {
+          if (v == null) continue
+          const t = e.seasonRatedAt?.[Number(snStr)] ?? ratingDateProxy(e)
+          if (inPeriod(t, period)) add(seasonAcc, bucketOf(t), v)
+        }
+      }
     }
-    const years: Record<number, { sum: number; count: number }> = {}
-    for (const h of watchHistory) {
-      if (h.rating == null) continue
-      const y = new Date(h.watchedAt).getFullYear()
-      if (!years[y]) years[y] = { sum: 0, count: 0 }
-      years[y].sum += h.rating
-      years[y].count++
+    const avgOf = (acc: Map<number, { sum: number; count: number }>, b: number): number | null => {
+      const d = acc.get(b)
+      return d && d.count > 0 ? round1(d.sum / d.count) : null
     }
-    return Object.entries(years)
-      .sort(([a], [b]) => Number(a) - Number(b))
-      .map(([year, { sum, count }]) => ({
-        label: year,
-        avg: count > 0 ? Math.round((sum / count) * 10) / 10 : null
-      }))
-  }, [watchHistory, periodHistory, period])
+    const point = (b: number, label: string) => {
+      const accs = [movieAcc, showAcc, seasonAcc, episodeAcc]
+      // Weighted across all ratings in the bucket (not the mean of the line
+      // averages), so 100 episodes don't count the same as 1 movie.
+      const totalCount = accs.reduce((n, a) => n + (a.get(b)?.count ?? 0), 0)
+      const totalSum = accs.reduce((n, a) => n + (a.get(b)?.sum ?? 0), 0)
+      const combined = totalCount > 0 ? round1(totalSum / totalCount) : null
+      return {
+        label,
+        movies: avgOf(movieAcc, b),
+        shows: avgOf(showAcc, b),
+        seasons: avgOf(seasonAcc, b),
+        episodes: avgOf(episodeAcc, b),
+        combined,
+      }
+    }
+    if (period !== 'all') {
+      return monthNames.map((label, i) => point(i, label))
+    }
+    const years = [...new Set([...movieAcc.keys(), ...showAcc.keys(), ...seasonAcc.keys(), ...episodeAcc.keys()])].sort((a, b) => a - b)
+    return years.map((y) => point(y, String(y)))
+  }, [entries, period])
 
-  const hasRatingOverTime = ratingOverTime.some(d => d.avg != null)
+  const hasRatingOverTime = ratingOverTime.some(d => d.combined != null)
 
   const typeDist = useMemo(() => {
     const source = period === 'all' ? watchHistory : periodHistory
@@ -508,44 +559,42 @@ export function Stats() {
     episodeTitle?: string
   }
 
-  // All rated plays from the period (or all-time), dedupe by media+episode so
-  // the same episode rated multiple times appears once. TV shows that the
-  // user has rated overall (entry.userRating) are surfaced from the library
-  // directly since there's typically no non-episode play to carry the rating.
+  // Every rating the user has set, derived from the library (the single home for
+  // ratings): a movie/show's overall rating (userRating) and each episode's own
+  // rating (tvProgress[key].rating). Plays carry none. Scoped to the period by
+  // when each thing was watched. Episode titles, which the library doesn't store,
+  // are pulled from the matching play.
   const topRatedByKind = useMemo(() => {
-    const playSource = period === 'all' ? watchHistory : periodHistory
+    // Episode titles aren't stored on the library entry; pull them from a play.
+    const epTitleByKey = new Map<string, string>()
+    for (const h of watchHistory) {
+      if (h.episodeKey && h.episodeTitle && !epTitleByKey.has(`${h.mediaId}::${h.episodeKey}`)) {
+        epTitleByKey.set(`${h.mediaId}::${h.episodeKey}`, h.episodeTitle)
+      }
+    }
+
     const movies: RatedRow[] = []
     const episodes: RatedRow[] = []
     const tvShows: RatedRow[] = []
-    const seenPlay = new Set<string>()
-    for (const h of playSource) {
-      if (h.rating == null) continue
-      const key = `${h.mediaId}::${h.episodeKey ?? ''}`
-      if (seenPlay.has(key)) continue
-      seenPlay.add(key)
-      const entry = library[h.mediaId]
-      if (!entry) continue
-      const row: RatedRow = {
-        entry,
-        rating: h.rating,
-        episodeKey: h.episodeKey,
-        episodeTitle: h.episodeTitle
-      }
-      if (h.episodeKey) episodes.push(row)
-      else if (entry.mediaType === 'movie') movies.push(row)
-      else if (entry.mediaType === 'tv' || entry.mediaType === 'anime') tvShows.push(row)
-    }
-    // TV shows are usually rated overall via userRating (per-play ratings are
-    // rare for shows). Merge those in, deduping by mediaId so a per-play
-    // rating doesn't get overwritten if both exist.
-    const tvIds = new Set(tvShows.map(r => r.entry.id))
-    const periodIds = period === 'all' ? null : new Set(periodHistory.map(h => h.mediaId))
     for (const e of entries) {
+      const isShow = e.mediaType === 'tv' || e.mediaType === 'anime'
+
+      if (isShow && e.tvProgress) {
+        for (const [epKey, p] of Object.entries(e.tvProgress)) {
+          if (p.rating == null) continue
+          if (!inPeriod(p.watchedAt, period)) continue
+          episodes.push({ entry: e, rating: p.rating, episodeKey: epKey, episodeTitle: epTitleByKey.get(`${e.id}::${epKey}`) })
+        }
+      }
+
       if (e.userRating == null) continue
-      if (e.mediaType !== 'tv' && e.mediaType !== 'anime') continue
-      if (tvIds.has(e.id)) continue
-      if (periodIds && !periodIds.has(e.id)) continue
-      tvShows.push({ entry: e, rating: e.userRating })
+      const watchedInPeriod = period === 'all'
+        || playInPeriod.has(e.id)
+        || inPeriod(e.watchedDate, period)
+        || (isShow && Object.values(e.tvProgress ?? {}).some((p) => inPeriod(p.watchedAt, period)))
+      if (!watchedInPeriod) continue
+      if (e.mediaType === 'movie') movies.push({ entry: e, rating: e.userRating })
+      else if (isShow) tvShows.push({ entry: e, rating: e.userRating })
     }
     const byRating = (a: RatedRow, b: RatedRow) => b.rating - a.rating
     return {
@@ -554,7 +603,7 @@ export function Stats() {
       tv: [...tvShows].sort(byRating).slice(0, 8),
       episodes: [...episodes].sort(byRating).slice(0, 8)
     }
-  }, [watchHistory, periodHistory, period, library, entries])
+  }, [watchHistory, period, entries, playInPeriod])
 
   const topRated = topRatedByKind[topRatedKind]
 
@@ -754,10 +803,10 @@ export function Stats() {
                       icon={TrendingUp}
                       title="Average Rating Over Time"
                       tone="warning"
-                      subtitle={period === 'all' ? 'Yearly average from log entries' : 'Monthly average from log entries'}
+                      subtitle={period === 'all' ? 'Yearly average by date rated (movies, shows, seasons, episodes, combined)' : 'Monthly average by date rated (movies, shows, seasons, episodes, combined)'}
                     />
                     <CardContent>
-                      <ResponsiveContainer width="100%" height={150}>
+                      <ResponsiveContainer width="100%" height={190}>
                         <LineChart data={ratingOverTime} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
                           <CartesianGrid strokeDasharray="3 3" stroke={COLORS.border} vertical={false} />
                           <XAxis dataKey="label" tick={{ fontSize: 10, fill: COLORS.muted }} />
@@ -770,16 +819,38 @@ export function Stats() {
                             contentStyle={TOOLTIP_STYLE}
                             labelStyle={TOOLTIP_LABEL_STYLE}
                             itemStyle={TOOLTIP_ITEM_STYLE}
-                            formatter={(val) => val != null ? [`${val}★`, 'Avg rating'] : ['No data', 'Avg rating']}
+                            formatter={(val, name) => [val != null ? `${val}★` : 'No data', name]}
+                          />
+                          <Legend wrapperStyle={{ fontSize: 11, color: COLORS.muted }} />
+                          <Line
+                            type="monotone" dataKey="movies" name="Movies"
+                            stroke={COLORS.info} strokeWidth={2} connectNulls
+                            dot={{ fill: COLORS.info, r: 3, strokeWidth: 0 }}
+                            activeDot={{ fill: COLORS.info, r: 5, stroke: COLORS.card, strokeWidth: 2 }}
                           />
                           <Line
-                            type="monotone"
-                            dataKey="avg"
-                            stroke={COLORS.warning}
-                            strokeWidth={2.5}
+                            type="monotone" dataKey="shows" name="Shows"
+                            stroke={COLORS.primary} strokeWidth={2} connectNulls
+                            dot={{ fill: COLORS.primary, r: 3, strokeWidth: 0 }}
+                            activeDot={{ fill: COLORS.primary, r: 5, stroke: COLORS.card, strokeWidth: 2 }}
+                          />
+                          <Line
+                            type="monotone" dataKey="seasons" name="Seasons"
+                            stroke={COLORS.success} strokeWidth={2} connectNulls
+                            dot={{ fill: COLORS.success, r: 3, strokeWidth: 0 }}
+                            activeDot={{ fill: COLORS.success, r: 5, stroke: COLORS.card, strokeWidth: 2 }}
+                          />
+                          <Line
+                            type="monotone" dataKey="episodes" name="Episodes"
+                            stroke={COLORS.teal} strokeWidth={2} connectNulls
+                            dot={{ fill: COLORS.teal, r: 3, strokeWidth: 0 }}
+                            activeDot={{ fill: COLORS.teal, r: 5, stroke: COLORS.card, strokeWidth: 2 }}
+                          />
+                          <Line
+                            type="monotone" dataKey="combined" name="Combined"
+                            stroke={COLORS.warning} strokeWidth={2.5} connectNulls
                             dot={{ fill: COLORS.warning, r: 3, strokeWidth: 0 }}
                             activeDot={{ fill: COLORS.warning, r: 5, stroke: COLORS.card, strokeWidth: 2 }}
-                            connectNulls={false}
                           />
                         </LineChart>
                       </ResponsiveContainer>

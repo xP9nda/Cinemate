@@ -43,9 +43,16 @@ export function MediaEditSheet({ open, onClose, entry }: MediaEditSheetProps) {
   const handleSave = async () => {
     setSaving(true)
     try {
+      // Stamp userRatingAt only when the rating actually changes, so editing the
+      // note/date doesn't move the rating's date on the Stats chart; preserve the
+      // existing stamp otherwise. Matches the rating actions' write-time stamping.
+      const ratingChanged = (entry.userRating ?? null) !== (rating ?? null)
       await setLibraryEntry({
         ...entry,
         userRating: rating,
+        userRatingAt: ratingChanged
+          ? (rating != null ? Date.now() : null)
+          : (entry.userRatingAt ?? null),
         review,
         watchedDate: entry.status === 'watched'
           ? toLocalDTString(watchedDate ?? new Date())

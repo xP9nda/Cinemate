@@ -20,7 +20,7 @@ import {
 } from '../lib/importHelpers'
 import { searchMoviesWithYear, getMovie, getTV, getSeason } from '../lib/tmdb'
 import { estimateEntryStats } from '../lib/mediaStats'
-import { parseImportDate, dayFloor } from '../lib/utils'
+import { parseImportDate, dayFloor, parseDateMs } from '../lib/utils'
 import type { LibraryEntry, WatchHistoryEntry, EpisodeProgress, CustomList, CollectionEntry, ListItemMeta, TMDbTV } from '../types'
 
 interface Props {
@@ -438,10 +438,16 @@ export function ImportDialog({ open, onOpenChange, initialSource }: Props) {
           for (const [k, ep] of Object.entries(item.episodes)) {
             const lastPlay = ep.plays.length > 0 ? ep.plays[ep.plays.length - 1].watchedAt : null
             const ex = merged[k]
+            const epRating = ex?.rating ?? ep.rating
+            const epWatched = ex?.watchedAt ?? lastPlay
             merged[k] = {
               ...ex,   // keep a previously stored per-episode runtime
-              watchedAt: ex?.watchedAt ?? lastPlay,
-              rating: ex?.rating ?? ep.rating,
+              watchedAt: epWatched,
+              rating: epRating,
+              // Stamp when the episode was rated (preserve a real existing stamp;
+              // otherwise approximate by when it was watched) so the Stats chart can
+              // date it without leaning on the one-time backfill.
+              ratedAt: ex?.ratedAt ?? (epRating != null ? (parseDateMs(epWatched) ?? Date.now()) : null),
               note: (ex?.note && ex.note.length > 0) ? ex.note : ep.note,
             }
           }
@@ -524,8 +530,17 @@ export function ImportDialog({ open, onOpenChange, initialSource }: Props) {
         }
 
         const mergedSeasonRatings: Record<number, number | null> = { ...(existing?.seasonRatings ?? {}) }
+        const mergedSeasonRatedAt: Record<number, number | null> = { ...(existing?.seasonRatedAt ?? {}) }
+        // Approximate when a season was rated (latest watch, then earliest, then now)
+        // so imported season ratings land on the Stats chart at the source.
+        const seasonRatedProxy = parseDateMs(importedLatest)
+          ?? (isNaN(importedFirstTs) ? (item.listedAt ?? Date.now()) : importedFirstTs)
         for (const [k, v] of Object.entries(item.seasonRatings)) {
-          if (mergedSeasonRatings[Number(k)] == null) mergedSeasonRatings[Number(k)] = v
+          const sn = Number(k)
+          if (mergedSeasonRatings[sn] == null) {
+            mergedSeasonRatings[sn] = v
+            if (v != null) mergedSeasonRatedAt[sn] = mergedSeasonRatedAt[sn] ?? seasonRatedProxy
+          }
         }
 
         // Seed the denormalised runtime & episode aggregates as an episode-count × avg
@@ -542,6 +557,16 @@ export function ImportDialog({ open, onOpenChange, initialSource }: Props) {
         const runtimeStats = existing?.runtimeStats ?? estimated?.runtime ?? undefined
         const episodeStats = existing?.episodeStats ?? estimated?.episodes ?? undefined
 
+        const finalUserRating = existing?.userRating ?? item.userRating
+        const finalWatchedDate = existing?.watchedDate ?? importedLatest
+        const finalAddedDate = existing?.addedDate ?? (isNaN(importedFirstTs) ? (item.listedAt ?? Date.now()) : importedFirstTs)
+        // Stamp when the overall rating was given (preserve a real existing stamp;
+        // otherwise approximate by the latest watch, then added date) so the Stats
+        // chart can date it at the source rather than via the one-time backfill.
+        const finalUserRatingAt = finalUserRating != null
+          ? (existing?.userRatingAt ?? parseDateMs(finalWatchedDate) ?? finalAddedDate)
+          : null
+
         const entry: LibraryEntry = {
           id: libId,
           mediaType: effectiveMediaType,
@@ -551,14 +576,16 @@ export function ImportDialog({ open, onOpenChange, initialSource }: Props) {
           backdropPath: existing?.backdropPath ?? backdropPath,
           releaseYear: existing?.releaseYear ?? releaseYear,
           status,
-          userRating: existing?.userRating ?? item.userRating,
+          userRating: finalUserRating,
+          userRatingAt: finalUserRatingAt,
           review: (existing?.review && existing.review.length > 0) ? existing.review : item.review,
-          watchedDate: existing?.watchedDate ?? importedLatest,
-          addedDate: existing?.addedDate ?? (isNaN(importedFirstTs) ? (item.listedAt ?? Date.now()) : importedFirstTs),
+          watchedDate: finalWatchedDate,
+          addedDate: finalAddedDate,
           listIds: existing?.listIds ?? [],
           genreIds: existing?.genreIds ?? genreIds,
           tvProgress,
           seasonRatings: mergedSeasonRatings,
+          seasonRatedAt: mergedSeasonRatedAt,
           runtime: existing?.runtime ?? runtime,
           runtimeStats,
           episodeStats,
@@ -571,9 +598,8 @@ export function ImportDialog({ open, onOpenChange, initialSource }: Props) {
           const pushPlay = (
             epKey: string | undefined,
             epTitle: string | undefined,
-            play: { watchedAt: string | null; rating?: number | null; review?: string; tags?: string[]; isRewatch?: boolean },
+            play: { watchedAt: string | null; review?: string; tags?: string[]; isRewatch?: boolean },
             isLast: boolean,
-            fallbackRating: number | null,
             fallbackNote: string,
             isRewatchOverride?: boolean,
           ): void => {
@@ -596,7 +622,6 @@ export function ImportDialog({ open, onOpenChange, initialSource }: Props) {
               mediaId: libId,
               watchedAt: ts,
               watchedAtDT: play.watchedAt,
-              rating: (play.rating ?? null) !== null ? play.rating! : (isLast ? fallbackRating : null),
               note: (play.review && play.review.length > 0) ? play.review : (isLast ? fallbackNote : ''),
               tags,
               episodeKey: epKey,
@@ -606,7 +631,7 @@ export function ImportDialog({ open, onOpenChange, initialSource }: Props) {
           }
 
           for (let pi = 0; pi < item.plays.length; pi++) {
-            pushPlay(undefined, undefined, item.plays[pi], pi === item.plays.length - 1, item.userRating, item.review)
+            pushPlay(undefined, undefined, item.plays[pi], pi === item.plays.length - 1, item.review)
           }
           for (const [epKey, ep] of Object.entries(item.episodes)) {
             const [sStr, eStr] = epKey.split(':')
@@ -616,7 +641,7 @@ export function ImportDialog({ open, onOpenChange, initialSource }: Props) {
               : `S${sStr.padStart(2, '0')}E${eStr.padStart(2, '0')}`
             for (let pi = 0; pi < ep.plays.length; pi++) {
               const isLast = pi === ep.plays.length - 1
-              pushPlay(epKey, epTitle, { watchedAt: ep.plays[pi].watchedAt }, isLast, ep.rating, ep.note, pi > 0)
+              pushPlay(epKey, epTitle, { watchedAt: ep.plays[pi].watchedAt }, isLast, ep.note, pi > 0)
             }
           }
         }

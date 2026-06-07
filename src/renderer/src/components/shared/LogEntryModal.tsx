@@ -8,7 +8,7 @@ import { Textarea } from '../ui/textarea'
 import { DateTimePicker } from '../ui/date-time-picker'
 import { RatingInput } from './RatingInput'
 import { useStore } from '../../lib/store'
-import { uid, nowLocalDT } from '../../lib/utils'
+import { uid, nowLocalDT, effectiveRating } from '../../lib/utils'
 import type { WatchHistoryEntry, MediaType } from '../../types'
 
 interface LogEntryModalProps {
@@ -37,18 +37,15 @@ export function LogEntryModal({
 }: LogEntryModalProps) {
   const settings = useStore(s => s.settings)
   const addHistory = useStore(s => s.addHistory)
-  const setEpisodeRating = useStore(s => s.setEpisodeRating)
+  const setLogRating = useStore(s => s.setLogRating)
   const watchHistory = useStore(s => s.watchHistory)
   const libEntry = useStore(s => s.library[mediaId])
   // The field holds the single rating for whatever's being logged: an episode's
   // rating lives in tvProgress[episodeKey]; a movie / show-level log's rating IS
-  // the title's overall rating. Seed from whichever applies so an existing rating
-  // shows pre-filled, and editing it updates that same one rating.
-  const [rating, setRating] = useState<number | null>(
-    episodeKey
-      ? (libEntry?.tvProgress?.[episodeKey]?.rating ?? null)
-      : (existingEntry?.rating ?? libEntry?.userRating ?? null)
-  )
+  // the title's overall rating (LibraryEntry.userRating). There is no per-play
+  // rating - the field reflects that one canonical rating, and editing it updates
+  // that same one rating, never the individual play.
+  const [rating, setRating] = useState<number | null>(effectiveRating(libEntry, episodeKey))
   const [note, setNote] = useState(existingEntry?.note ?? '')
   const [watchedDate, setWatchedDate] = useState<Date>(
     dtStringToDate(existingEntry?.watchedAtDT ?? nowLocalDT())
@@ -112,7 +109,6 @@ export function LogEntryModal({
         mediaId,
         watchedAt: watchedDate.getTime(),
         watchedAtDT,
-        rating: episodeKey ? null : rating,
         note,
         tags: tags.length > 0 ? tags : undefined,
         episodeKey,
@@ -120,14 +116,14 @@ export function LogEntryModal({
         isRewatch: isRewatch || undefined
       }
       await addHistory(entry)
-      // Let the caller reconcile status / tvProgress first - logEpisode creates the
-      // entry on a first-time watch - so the episode-rating write below always lands
-      // on an existing entry. Then persist the single rating for this episode.
+      // Let the caller reconcile status / tvProgress first - logEpisode / a movie's
+      // reconcile create the library entry on a first-time watch - so the rating
+      // write below always lands on an existing entry. The rating is never stored on
+      // the play: setLogRating routes it to the one canonical home (an episode's
+      // tvProgress[episodeKey], or the title's overall userRating).
       await onSaved?.(entry)
-      if (episodeKey) {
-        const [mt, tid] = mediaId.split(':')
-        await setEpisodeRating({ mediaType: mt as MediaType, tmdbId: Number(tid) }, episodeKey, rating)
-      }
+      const [mt, tid] = mediaId.split(':')
+      await setLogRating({ mediaType: mt as MediaType, tmdbId: Number(tid) }, episodeKey, rating)
       if (existingEntry) {
         toast.success('Log entry updated')
       } else if (episodeKey && episodeTitle) {

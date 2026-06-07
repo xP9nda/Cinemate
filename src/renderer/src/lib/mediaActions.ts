@@ -405,7 +405,6 @@ export class MediaActions {
       mediaId: idOf(target),
       watchedAt: Date.now(),
       watchedAtDT: nowLocalDT(),
-      rating: null,
       note: '',
       episodeKey: epKey,
       episodeTitle: epTitle,
@@ -447,7 +446,6 @@ export class MediaActions {
           mediaId: id,
           watchedAt: now,
           watchedAtDT: nowDT,
-          rating: null,
           note: '',
           episodeKey: key,
           episodeTitle: `S${ep.season_number}E${ep.episode_number}: ${ep.name}`,
@@ -528,7 +526,7 @@ export class MediaActions {
 
   async setOverallRating(target: MediaTarget, value: number | null): Promise<void> {
     const entry = this.ensureEntry(target, 'watchlist')
-    await this.get().setLibraryEntry({ ...entry, userRating: value })
+    await this.get().setLibraryEntry({ ...entry, userRating: value, userRatingAt: value != null ? Date.now() : null })
   }
 
   async setReview(target: MediaTarget, review: string): Promise<void> {
@@ -539,19 +537,51 @@ export class MediaActions {
   async setEpisodeRating(target: MediaTarget, epKey: string, value: number | null): Promise<void> {
     const entry = this.get().library[idOf(target)]
     if (!entry) return
-    const prev = entry.tvProgress?.[epKey] ?? { watchedAt: null, note: '' }
+    const prev = entry.tvProgress?.[epKey] ?? { watchedAt: null, rating: null, note: '' }
+    // Don't restamp ratedAt when the rating is unchanged: editing a play's date /
+    // note or logging an episode rewatch (both route here via setLogRating with the
+    // episode's current rating) must not move the episode's rating time. Mirrors the
+    // movie guard in setLogRating / setOverallRating.
+    if ((prev.rating ?? null) === value) return
     await this.get().setLibraryEntry({
       ...entry,
-      tvProgress: { ...entry.tvProgress, [epKey]: { ...prev, rating: value } },
+      tvProgress: { ...entry.tvProgress, [epKey]: { ...prev, rating: value, ratedAt: value != null ? Date.now() : null } },
     })
+  }
+
+  /**
+   * Set the canonical rating for whatever a logged play targets: an episode's own
+   * rating (tvProgress[epKey]) or, for a movie / show-level play, the title's
+   * overall rating (userRating). The single entry point the LogEntryModal uses so
+   * the modal never branches on movie-vs-episode itself.
+   *
+   * Writes ONLY to an existing library entry. A first-time watch creates the entry
+   * via the caller's reconcile (reconcileMovieLog / logEpisode) before this runs,
+   * so we deliberately do NOT ensureEntry here: doing so would fabricate a
+   * metadata-poor entry from the bare {mediaType, tmdbId} log target (blank title,
+   * no poster) which repairOrphanedHistory would then skip, leaving permanent junk.
+   * For an orphan play with no entry there is simply nothing to rate; repair
+   * recreates the entry with real metadata.
+   */
+  async setLogRating(target: MediaTarget, episodeKey: string | undefined, value: number | null): Promise<void> {
+    if (episodeKey) {
+      await this.setEpisodeRating(target, episodeKey, value)
+      return
+    }
+    const entry = this.get().library[idOf(target)]
+    if (!entry || entry.userRating === value) return
+    await this.get().setLibraryEntry({ ...entry, userRating: value, userRatingAt: value != null ? Date.now() : null })
   }
 
   async setSeasonRating(target: MediaTarget, seasonNumber: number, value: number | null): Promise<void> {
     const entry = this.get().library[idOf(target)]
     if (!entry) return
+    // Don't restamp seasonRatedAt when the rating is unchanged (mirrors setEpisodeRating).
+    if ((entry.seasonRatings?.[seasonNumber] ?? null) === value) return
     await this.get().setLibraryEntry({
       ...entry,
       seasonRatings: { ...entry.seasonRatings, [seasonNumber]: value },
+      seasonRatedAt: { ...entry.seasonRatedAt, [seasonNumber]: value != null ? Date.now() : null },
     })
   }
 

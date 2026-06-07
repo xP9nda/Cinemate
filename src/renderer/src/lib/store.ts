@@ -4,7 +4,7 @@ import type { LibraryEntry, WatchHistoryEntry, CustomList, AppSettings, MediaTyp
 import * as db from './db'
 import { setApiKey, setTTL, getMovieBasic, getTVBasic } from './tmdb'
 import { computeRuleItemIds, arraysEqualSet } from './rulesEngine'
-import { DEFAULT_PAGINATION } from './utils'
+import { DEFAULT_PAGINATION, ratingDateProxy, parseDateMs } from './utils'
 import { MediaActions, buildLibEntry, latestPlayDate, type MediaTarget, type CatalogEpisode, type ListItemRef } from './mediaActions'
 import { computeEntryStats } from './mediaStats'
 
@@ -65,7 +65,7 @@ export interface AppStore {
   addHistory: (entry: WatchHistoryEntry) => Promise<void>
   removeHistory: (id: string) => Promise<void>
   bulkRemoveHistory: (ids: string[]) => Promise<void>
-  bulkSetHistoryRating: (ids: string[], rating: number | null) => Promise<void>
+  bulkSetHistoryRating: (ids: string[], rating: number | null) => Promise<number>
   bulkSetHistoryRewatch: (ids: string[], isRewatch: boolean) => Promise<void>
   bulkUpdateHistoryTags: (ids: string[], add: string[], remove: string[]) => Promise<void>
   getMediaHistory: (mediaId: string) => WatchHistoryEntry[]
@@ -116,6 +116,7 @@ export interface AppStore {
   setReview: (target: MediaTarget, review: string) => Promise<void>
   setEpisodeRating: (target: MediaTarget, epKey: string, value: number | null) => Promise<void>
   setSeasonRating: (target: MediaTarget, seasonNumber: number, value: number | null) => Promise<void>
+  setLogRating: (target: MediaTarget, episodeKey: string | undefined, value: number | null) => Promise<void>
   toggleListItem: (list: CustomList, item: ListItemRef) => Promise<'added' | 'removed'>
   createListWith: (name: string, item: ListItemRef) => Promise<CustomList>
   addItemsToList: (itemIds: string[], listId: string) => Promise<number>
@@ -145,6 +146,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   pagination: DEFAULT_PAGINATION,
   sidebarConfig: { order: [], hidden: [] },
   setupComplete: false,
+  ratingTimestampsBackfilled: false,
 }
 
 export const useStore = create<AppStore>()(
@@ -206,6 +208,69 @@ export const useStore = create<AppStore>()(
       watchHistory.sort((a, b) => b.watchedAt - a.watchedAt)
       set({ watchHistory, historyLoaded: true })
 
+      // One-time migration: stamp rating timestamps (userRatingAt /
+      // EpisodeProgress.ratedAt) onto ratings made before timestamps were tracked,
+      // so the Stats "Average Rating Over Time" chart can bucket them by date rated.
+      // We don't know when an old rating was actually given, so approximate it by
+      // the most recent watch of that media/episode (then the entry's own watch
+      // marker, then addedDate). New ratings are stamped at the write site (rating
+      // actions + import), so this only needs to run once for pre-existing data; the
+      // persisted flag makes every later load skip the scan entirely.
+      if (!settings.ratingTimestampsBackfilled) {
+        const lastWatchByMedia: Record<string, number> = {}
+        const lastWatchByEp: Record<string, number> = {}
+        for (const h of watchHistory) {
+          if (h.watchedAt > (lastWatchByMedia[h.mediaId] ?? -Infinity)) lastWatchByMedia[h.mediaId] = h.watchedAt
+          if (h.episodeKey) {
+            const k = `${h.mediaId}::${h.episodeKey}`
+            if (h.watchedAt > (lastWatchByEp[k] ?? -Infinity)) lastWatchByEp[k] = h.watchedAt
+          }
+        }
+        const patched: LibraryEntry[] = []
+        for (const e of Object.values(library)) {
+          let next = e
+          if (e.userRating != null && e.userRatingAt == null) {
+            next = { ...next, userRatingAt: lastWatchByMedia[e.id] ?? ratingDateProxy(e) }
+          }
+          if (e.tvProgress) {
+            let prog: Record<string, EpisodeProgress> | null = null
+            for (const [epKey, p] of Object.entries(e.tvProgress)) {
+              if (p.rating != null && p.ratedAt == null) {
+                const t = lastWatchByEp[`${e.id}::${epKey}`]
+                  ?? parseDateMs(p.watchedAt)
+                  ?? lastWatchByMedia[e.id]
+                  ?? ratingDateProxy(e)
+                prog = prog ?? { ...e.tvProgress }
+                prog[epKey] = { ...p, ratedAt: t }
+              }
+            }
+            if (prog) next = { ...next, tvProgress: prog }
+          }
+          if (e.seasonRatings) {
+            let sr: Record<number, number | null> | null = null
+            for (const [snStr, v] of Object.entries(e.seasonRatings)) {
+              const sn = Number(snStr)
+              if (v != null && e.seasonRatedAt?.[sn] == null) {
+                sr = sr ?? { ...(e.seasonRatedAt ?? {}) }
+                sr[sn] = lastWatchByMedia[e.id] ?? ratingDateProxy(e)
+              }
+            }
+            if (sr) next = { ...next, seasonRatedAt: sr }
+          }
+          if (next !== e) patched.push(next)
+        }
+        if (patched.length > 0) {
+          await db.bulkSetLibraryEntries(patched)
+          set((s) => {
+            const lib = { ...s.library }
+            for (const e of patched) lib[e.id] = e
+            return { library: lib }
+          })
+        }
+        await db.setSetting('ratingTimestampsBackfilled', true)
+        set((s) => ({ settings: { ...s.settings, ratingTimestampsBackfilled: true } }))
+      }
+
       // Load lists
       const lists = await db.getAllLists()
       set({ lists, listsLoaded: true })
@@ -255,8 +320,12 @@ export const useStore = create<AppStore>()(
       } else if (entry.prevStatus !== undefined) {
         finalEntry = { ...entry, prevStatus: undefined }
       }
-      await db.setLibraryEntry(finalEntry)
+      // Reflect the change in memory first so the UI updates instantly (e.g. the
+      // rating widget can close and show the new value without waiting). The disk
+      // write (debounced/atomic) and the auto-list recompute then follow in the
+      // background rather than blocking the render.
       set((s) => ({ library: { ...s.library, [finalEntry.id]: finalEntry } }))
+      await db.setLibraryEntry(finalEntry)
       // Refresh the denormalised runtime totals in the background so the status
       // change / episode log applies instantly and the stats fill in a beat later.
       trackRuntimeStats(finalEntry.id, prev, get, set)
@@ -327,20 +396,14 @@ export const useStore = create<AppStore>()(
       set((s) => ({
         watchHistory: [entry, ...s.watchHistory.filter((h) => h.id !== entry.id)].sort((a, b) => b.watchedAt - a.watchedAt)
       }))
-      // Mirror play data onto the library entry so the two never diverge:
-      //  - a movie / show-level log's rating IS the title's overall rating, so
-      //    copy it across (only when a rating was given - logging without one
-      //    must not wipe an existing rating);
-      //  - a watched title's watchedDate tracks its most recent play, so a
-      //    rewatch (or an edited play date) moves the date forward.
-      // (Episode ratings live in tvProgress; for an as-yet-unsaved title,
-      // repairOrphanedHistory carries the rating across.)
+      // Mirror play data onto the library entry so the two never diverge: a
+      // watched title's watchedDate tracks its most recent play, so a rewatch (or
+      // an edited play date) moves the date forward. Ratings are never carried
+      // from a play - a play has none; the modal writes the canonical rating
+      // (userRating / tvProgress) directly.
       const lib = get().library[entry.mediaId]
       if (lib) {
         let updated = lib
-        if (!entry.episodeKey && entry.rating != null && lib.userRating !== entry.rating) {
-          updated = { ...updated, userRating: entry.rating }
-        }
         if (lib.status === 'watched') {
           const latest = latestPlayDate(get().watchHistory, entry.mediaId)
           if (latest && latest !== updated.watchedDate) updated = { ...updated, watchedDate: latest }
@@ -390,45 +453,54 @@ export const useStore = create<AppStore>()(
       await get().recomputeAutoLists()
     },
 
-    // Set the same rating across a set of plays. A movie/show-level play's rating
-    // is the title's overall rating, so mirror it onto the library entry (matching
-    // addHistory); an episode play's rating lives in tvProgress[episodeKey].
+    // Set the canonical rating for the things a set of plays refer to. There is no
+    // per-play rating: a movie/show-level play maps to the title's overall rating
+    // (userRating); an episode play maps to that episode's rating
+    // (tvProgress[episodeKey]). Plays themselves are never written. Returns how many
+    // selected plays were actually rated (their library entry exists) so the caller
+    // can report honestly rather than claiming success for plays it couldn't touch.
     bulkSetHistoryRating: async (ids, rating) => {
       const idSet = new Set(ids)
       const { watchHistory, library } = get()
-      const updatedHistory: WatchHistoryEntry[] = []
       const libPatches: Record<string, LibraryEntry> = {}
+      const ratedAt = rating != null ? Date.now() : null
+      let applied = 0
+      const orphans = new Set<string>()
       for (const h of watchHistory) {
         if (!idSet.has(h.id)) continue
+        const lib = libPatches[h.mediaId] ?? library[h.mediaId]
+        if (!lib) { orphans.add(h.mediaId); continue }
         if (h.episodeKey) {
-          const lib = libPatches[h.mediaId] ?? library[h.mediaId]
-          const prog = lib?.tvProgress?.[h.episodeKey]
-          if (lib && prog && prog.rating !== rating) {
+          // The library entry exists; the episode may simply lack a progress record
+          // (e.g. a play whose progress was cleared). Materialize it from the play so
+          // the rating actually lands and the play counts as rated - it is NOT an
+          // orphan, so it must not be reported as "not in your library".
+          const existingProg = lib.tvProgress?.[h.episodeKey]
+          const prog = existingProg ?? { watchedAt: h.watchedAtDT, note: '', rating: null }
+          applied++
+          if (prog.rating !== rating || (existingProg == null && rating != null)) {
             libPatches[h.mediaId] = {
               ...lib,
-              tvProgress: { ...lib.tvProgress, [h.episodeKey]: { ...prog, rating } },
+              tvProgress: { ...lib.tvProgress, [h.episodeKey]: { ...prog, rating, ratedAt } },
             }
           }
         } else {
-          updatedHistory.push({ ...h, rating })
-          const lib = libPatches[h.mediaId] ?? library[h.mediaId]
-          if (lib && lib.userRating !== rating) {
-            libPatches[h.mediaId] = { ...lib, userRating: rating }
+          applied++
+          if (lib.userRating !== rating) {
+            libPatches[h.mediaId] = { ...lib, userRating: rating, userRatingAt: ratedAt }
           }
         }
       }
       const libArr = Object.values(libPatches)
-      if (updatedHistory.length > 0) await db.bulkSetHistoryEntries(updatedHistory)
-      if (libArr.length > 0) await db.bulkSetLibraryEntries(libArr)
-      if (updatedHistory.length === 0 && libArr.length === 0) return
-      set((s) => {
-        const histMap = new Map(updatedHistory.map((h) => [h.id, h]))
-        return {
-          watchHistory: histMap.size > 0 ? s.watchHistory.map((h) => histMap.get(h.id) ?? h) : s.watchHistory,
-          library: libArr.length > 0 ? { ...s.library, ...libPatches } : s.library,
-        }
-      })
-      await get().recomputeAutoLists()
+      if (libArr.length > 0) {
+        await db.bulkSetLibraryEntries(libArr)
+        set((s) => ({ library: { ...s.library, ...libPatches } }))
+        await get().recomputeAutoLists()
+      }
+      // Heal any orphaned titles (no library entry) at the source so they become
+      // rateable next time; best-effort, runs in the background.
+      if (orphans.size > 0) get().repairOrphans().catch(() => { /* best-effort */ })
+      return applied
     },
 
     bulkSetHistoryRewatch: async (ids, isRewatch) => {
@@ -569,8 +641,9 @@ export const useStore = create<AppStore>()(
         if (from === '10star' && to === '5star') return Math.round(r / 2 * 2) / 2
         return r
       }
-      const { library, watchHistory } = get()
-      const updatedHistory = watchHistory.map((h) => ({ ...h, rating: convert(h.rating) }))
+      // All ratings live on the library entry (overall, per-episode, per-season);
+      // plays carry none, so only the library is converted.
+      const { library } = get()
       const updatedLibrary = Object.values(library).map((e) => {
         const newProgress = e.tvProgress
           ? Object.fromEntries(
@@ -582,12 +655,8 @@ export const useStore = create<AppStore>()(
         )
         return { ...e, userRating: convert(e.userRating), tvProgress: newProgress, seasonRatings: newSeasonRatings }
       })
-      await db.bulkSetHistoryEntries(updatedHistory)
       await db.bulkSetLibraryEntries(updatedLibrary)
-      set({
-        watchHistory: updatedHistory.sort((a, b) => b.watchedAt - a.watchedAt),
-        library: Object.fromEntries(updatedLibrary.map((e) => [e.id, e]))
-      })
+      set({ library: Object.fromEntries(updatedLibrary.map((e) => [e.id, e])) })
       await get().recomputeAutoLists()
     },
 
@@ -689,6 +758,7 @@ export const useStore = create<AppStore>()(
     setReview: (target, review) => media.setReview(target, review),
     setEpisodeRating: (target, epKey, value) => media.setEpisodeRating(target, epKey, value),
     setSeasonRating: (target, seasonNumber, value) => media.setSeasonRating(target, seasonNumber, value),
+    setLogRating: (target, episodeKey, value) => media.setLogRating(target, episodeKey, value),
     toggleListItem: (list, item) => media.toggleListItem(list, item),
     createListWith: (name, item) => media.createListWith(name, item),
     addItemsToList: (itemIds, listId) => media.addItemsToList(itemIds, listId),
@@ -896,12 +966,6 @@ async function repairOrphanedHistory(
     const tmdbId = Number(rawId)
     if (!tmdbId || (mediaType !== 'movie' && mediaType !== 'tv' && mediaType !== 'anime')) continue
 
-    // A title logged (with a rating) before it existed in the library keeps that
-    // rating as its overall rating - the log rating is the title's rating.
-    const ratedPlay = watchHistory
-      .filter((h) => h.mediaId === mediaId && !h.episodeKey && h.rating != null)
-      .sort((a, b) => b.watchedAt - a.watchedAt)[0]
-
     try {
       let built: LibraryEntry
       if (mediaType === 'movie') {
@@ -920,7 +984,17 @@ async function repairOrphanedHistory(
           year, 'watched', data.genres.map(g => g.id), avgRuntime
         )
       }
-      if (ratedPlay) built.userRating = ratedPlay.rating
+      // A title rated before it existed in the library kept that rating only on the
+      // play (legacy data: plays no longer carry ratings). Recover it as the title's
+      // overall rating, stamped at the play's watch time, so the orphan repair that
+      // creates the entry doesn't silently drop a pre-upgrade rating.
+      const legacyRatedPlay = watchHistory
+        .filter((h) => h.mediaId === mediaId && !h.episodeKey && (h as { rating?: number | null }).rating != null)
+        .sort((a, b) => b.watchedAt - a.watchedAt)[0]
+      if (legacyRatedPlay) {
+        built.userRating = (legacyRatedPlay as { rating?: number | null }).rating ?? null
+        built.userRatingAt = legacyRatedPlay.watchedAt
+      }
       newEntries.push(built)
     } catch {
       // Skip entries that can't be resolved

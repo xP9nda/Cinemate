@@ -1,7 +1,7 @@
 import { clsx, type ClassValue } from 'clsx'
 import { twMerge } from 'tailwind-merge'
 import { format, formatDistanceToNow, parseISO } from 'date-fns'
-import type { PaginationSettings } from '../types'
+import type { LibraryEntry, PaginationSettings } from '../types'
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -83,6 +83,20 @@ export function fmtRating(r: number | null | undefined, system: '10star' | '5sta
   return `${r}/10`
 }
 
+// The single canonical rating for whatever a watch-history play / list row refers
+// to: an episode's own rating (tvProgress[epKey].rating) when episodeKey is given,
+// otherwise the title's overall rating (userRating). Ratings live only on the
+// library entry - plays never carry one - so every "rating to show for this row"
+// read goes through here instead of re-inlining the branch.
+export function effectiveRating(
+  entry: LibraryEntry | null | undefined,
+  episodeKey?: string | null,
+): number | null {
+  if (!entry) return null
+  if (episodeKey) return entry.tvProgress?.[episodeKey]?.rating ?? null
+  return entry.userRating ?? null
+}
+
 export function releaseYear(dateStr: string | null | undefined): number | null {
   if (!dateStr) return null
   const year = parseInt(dateStr.slice(0, 4), 10)
@@ -105,6 +119,24 @@ export function dayFloor(ts: number): number {
   const d = new Date(ts)
   d.setHours(0, 0, 0, 0)
   return d.getTime()
+}
+
+// Epoch ms for a stored/imported date string, or null if absent/unparseable.
+// Uses parseImportDate so date-only values stay on the user's local calendar day,
+// and guards the many rating-time reads against a NaN silently poisoning a chart
+// bucket (NaN.getFullYear() etc).
+export function parseDateMs(s: string | null | undefined): number | null {
+  if (!s) return null
+  const t = parseImportDate(s)
+  return Number.isNaN(t) ? null : t
+}
+
+// Approximate when an entry's rating happened when no explicit timestamp is
+// stored: its most recent watch date, else when it was added. Shared by the Stats
+// "Average Rating Over Time" chart and the store's one-time rating-timestamp
+// backfill so the two approximations never drift apart.
+export function ratingDateProxy(entry: { watchedDate: string | null; addedDate: number }): number {
+  return parseDateMs(entry.watchedDate) ?? entry.addedDate
 }
 
 export function nowLocalDT(): string {

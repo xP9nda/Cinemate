@@ -11,7 +11,7 @@ import { useStore } from '../lib/store'
 import type { MediaTarget, CatalogEpisode } from '../lib/mediaActions'
 import {
   cn, backdropUrl, posterUrl, fmtRuntime, fmtDate,
-  releaseYear, statusLabel, fmtRating, fmtRelative, parseImportDate
+  releaseYear, statusLabel, fmtRating, fmtRelative, parseImportDate, effectiveRating
 } from '../lib/utils'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
@@ -805,8 +805,7 @@ export function Detail() {
                       title={title}
                       ratingSystem={settings.ratingSystem}
                       timeFormat={settings.timeFormat}
-                      episodeRating={h.episodeKey ? (entry?.tvProgress?.[h.episodeKey]?.rating ?? null) : null}
-                      userRating={entry?.userRating ?? null}
+                      displayRating={effectiveRating(entry, h.episodeKey)}
                       onEdit={() => setEditingPlay(h)}
                       onDelete={async () => {
                         await removeHistory(h.id)
@@ -1218,7 +1217,7 @@ export function Detail() {
                   total={specificEpPlays.length}
                   ratingSystem={settings.ratingSystem}
                   timeFormat={settings.timeFormat}
-                  episodeRating={specificPlaysEpKey ? (entry?.tvProgress?.[specificPlaysEpKey]?.rating ?? null) : null}
+                  episodeRating={specificPlaysEpKey ? effectiveRating(entry, specificPlaysEpKey) : null}
                   onRemove={async () => {
                     await removeHistory(h.id)
                     toast.success('Play removed')
@@ -1377,7 +1376,7 @@ function EpisodeRow({
                   <button
                     onClick={() => setRatingOpen(false)}
                     className="p-0.5 rounded text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-                    aria-label="Cancel rating"
+                    aria-label="Close rating"
                   >
                     <X className="h-3 w-3" />
                   </button>
@@ -1495,18 +1494,16 @@ function EpisodeRow({
   )
 }
 
-function HistoryRow({ entry, title, ratingSystem, timeFormat, episodeRating, userRating, onEdit, onDelete }: {
+function HistoryRow({ entry, title, ratingSystem, timeFormat, displayRating, onEdit, onDelete }: {
   entry: WatchHistoryEntry
   title: string
   ratingSystem: string
   timeFormat: '12h' | '24h'
-  episodeRating?: number | null
-  userRating?: number | null
+  displayRating?: number | null
   onEdit: () => void
   onDelete: () => void
 }) {
   const [confirmDel, setConfirmDel] = useState(false)
-  const displayRating = entry.episodeKey != null ? episodeRating : (entry.rating ?? userRating ?? null)
   return (
     <>
       <div

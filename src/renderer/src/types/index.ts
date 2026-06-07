@@ -202,6 +202,11 @@ export interface TMDbGenre {
 export interface EpisodeProgress {
   watchedAt: string | null
   rating: number | null
+  // ms timestamp the `rating` was last set; null when cleared, absent until first
+  // rated. Set on write (same "optional, maintained on write" convention as
+  // runtimeStats / rewatchStartedAt). Drives the rated-date axis of the Stats
+  // "Average Rating Over Time" chart.
+  ratedAt?: number | null
   note: string
   // Real per-episode runtime (minutes), filled in from TMDb on a Detail visit.
   // null/absent means TMDb had none yet - consumers fall back to the show's
@@ -220,6 +225,7 @@ export interface LibraryEntry {
   status: WatchStatus
   prevStatus?: WatchStatus             // status to restore when leaving the watchlist; only meaningful while status === 'watchlist'
   userRating: number | null            // overall rating
+  userRatingAt?: number | null         // ms timestamp the overall userRating was last set (null when cleared; set on write)
   review: string
   watchedDate: string | null           // ISO datetime
   addedDate: number                    // ms timestamp
@@ -227,6 +233,7 @@ export interface LibraryEntry {
   genreIds?: number[]
   tvProgress: Record<string, EpisodeProgress> | null  // key: "s:e" e.g. "1:3"
   seasonRatings: Record<number, number | null>         // key: season number
+  seasonRatedAt?: Record<number, number | null>        // key: season number -> ms timestamp the season rating was last set (set on write; backfilled for old data)
   runtime?: number | null                              // minutes: movie runtime or avg episode runtime for TV
   // Denormalised runtime totals (minutes), refreshed on write whenever watch state
   // changes, so the library/list stats read them instead of fetching season data on
@@ -249,7 +256,9 @@ export interface WatchHistoryEntry {
   mediaId: string                      // lib entry id
   watchedAt: number                    // ms timestamp
   watchedAtDT: string                  // ISO datetime
-  rating: number | null
+  // No per-play rating: a rating is one value per ratable thing - a movie/show's
+  // overall rating (LibraryEntry.userRating) or an episode's own rating
+  // (EpisodeProgress.rating). A play records only when it was watched.
   note: string
   tags?: string[]
   episodeKey?: string                  // "1:3" for episode entries
@@ -399,6 +408,7 @@ export interface AppSettings {
   pagination: PaginationSettings
   sidebarConfig?: SidebarConfig
   setupComplete?: boolean
+  ratingTimestampsBackfilled?: boolean   // one-time migration guard: stamps userRatingAt/ratedAt onto pre-existing ratings, then skips the scan on later loads
 }
 
 export interface SidebarConfig {

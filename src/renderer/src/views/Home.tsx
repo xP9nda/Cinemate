@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { TrendingUp, Clock, Tv, Bookmark, ArrowRight, Star } from 'lucide-react'
 import { getTrending } from '../lib/tmdb'
 import { useStore } from '../lib/store'
-import { cn, posterUrl, fmtDate, fmtRating } from '../lib/utils'
+import { cn, posterUrl, fmtDate, fmtRating, effectiveRating } from '../lib/utils'
 import { MediaCard, MediaCardSkeleton } from '../components/shared/MediaCard'
 import { ScrollableRow } from '../components/shared/ScrollableRow'
 import { ContinueWatchingCard } from '../components/shared/ContinueWatchingCard'
@@ -138,9 +138,7 @@ export function Home() {
                 const libEntry = library[h.mediaId]
                 if (!libEntry) return null
                 const imgSrc = posterUrl(libEntry.posterPath, 'w92')
-                const displayRating = h.episodeKey
-                  ? (libEntry.tvProgress?.[h.episodeKey]?.rating ?? null)
-                  : h.rating
+                const displayRating = effectiveRating(libEntry, h.episodeKey)
                 return (
                   <button
                     key={h.id}

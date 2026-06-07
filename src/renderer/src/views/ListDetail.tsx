@@ -5,7 +5,7 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { useStore } from '../lib/store'
 import { useMediaStats, isEpisodeItem, parseEpisodeItem } from '../lib/mediaStats'
 import type { LibraryEntry, ListItemMeta, ListRules } from '../types'
-import { cn, posterUrl, fmtDate, fmtRating, statusLabel, resolvePageSize, DEFAULT_PAGINATION } from '../lib/utils'
+import { cn, posterUrl, fmtDate, fmtRating, statusLabel, resolvePageSize, DEFAULT_PAGINATION, effectiveRating } from '../lib/utils'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
@@ -168,9 +168,7 @@ export function ListDetail() {
     // episode of a 9-rated show sorts above every episode of an 8-rated show
     // regardless of how each individual episode was actually rated.
     const ratingOf = (it: typeof items[number]): number | null =>
-      it.isEpisode && it.episodeKey
-        ? (it.entry.tvProgress?.[it.episodeKey]?.rating ?? null)
-        : it.entry.userRating
+      effectiveRating(it.entry, it.isEpisode ? it.episodeKey : undefined)
     const watchedTsOf = (it: typeof items[number]): number => {
       if (it.isEpisode && it.episodeKey) {
         const at = it.entry.tvProgress?.[it.episodeKey]?.watchedAt
