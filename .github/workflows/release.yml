@@ -19,6 +19,28 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history + tags so the changelog can diff against the previous release
+
+      - name: Generate changelog
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          PREV_TAG=$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            RANGE="${PREV_TAG}..${TAG}"
+          else
+            RANGE="${TAG}"
+          fi
+          REPO_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+          {
+            echo "## Changes"
+            echo ""
+            git log --no-merges --pretty=format:"- [\`%h\`](${REPO_URL}/commit/%H) %s" "$RANGE"
+            echo ""
+          } > CHANGELOG_RELEASE.md
+          cat CHANGELOG_RELEASE.md
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -34,11 +56,10 @@ jobs:
         env:
           # Token electron-builder uses to create/upload the GitHub Release.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Code signing. When these secrets are set, electron-builder signs the
-          # installer automatically. When they are empty (the default), the build
-          # runs unsigned (forceCodeSigning is false), so nothing breaks until you
-          # add a certificate.
-          #   WIN_CSC_LINK          base64-encoded .pfx, or a URL/path to it
-          #   WIN_CSC_KEY_PASSWORD  the certificate's password
-          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+
+      - name: Update release notes
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${GITHUB_REF_NAME}" --notes-file CHANGELOG_RELEASE.md
