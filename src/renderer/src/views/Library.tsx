@@ -5,7 +5,7 @@ import {
 } from 'lucide-react'
 import { useStore } from '../lib/store'
 import type { MediaTarget } from '../lib/mediaActions'
-import { aggregateEntryStats, entryTimeRemaining, entryEpisodesRemaining } from '../lib/mediaStats'
+import { aggregateEntryStats, entryTimeRemaining, entryEpisodesRemaining, entryLastWatchedAt } from '../lib/mediaStats'
 import { cn, posterUrl, fmtDate, fmtRating, statusLabel, statusColor, mediaLabel, resolvePageSize, DEFAULT_PAGINATION } from '../lib/utils'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -177,29 +177,38 @@ export function Library() {
       const q = search.toLowerCase()
       entries = entries.filter((e) => e.title.toLowerCase().includes(q))
     }
+    // Precompute each entry's sort key once: some keys scan the entry (last-watched
+    // walks tvProgress), so computing them inside the comparator would rescan on
+    // every compare. In Progress sorts by the last episode watched, so it reorders
+    // as episodes are logged; every other tab sorts by the entry's own watchedDate -
+    // the date its card shows - so the order matches the displayed "Watched" date.
+    const sortKey = (e: LibraryEntry): number | string => {
+      switch (sort) {
+        case 'title': return e.title.toLowerCase()
+        case 'rating': return e.userRating ?? -1
+        case 'year': return e.releaseYear ?? 0
+        case 'addedDate': return e.addedDate
+        case 'watchedDate':
+          return tab === 'in_progress'
+            ? entryLastWatchedAt(e)
+            : (e.watchedDate ? new Date(e.watchedDate).getTime() : 0)
+        case 'timeRemaining': return entryTimeRemaining(e)
+        case 'episodesRemaining': return entryEpisodesRemaining(e)
+      }
+      return 0
+    }
+    const keys = new Map(entries.map((e): [string, number | string] => [e.id, sortKey(e)]))
     // Copy before sorting: when there's no search term `entries` is the memoised
     // scopedEntries array, and an in-place sort would mutate it.
     return [...entries].sort((a, b) => {
-      let av: number | string = 0
-      let bv: number | string = 0
-      switch (sort) {
-        case 'title': av = a.title.toLowerCase(); bv = b.title.toLowerCase(); break
-        case 'rating': av = a.userRating ?? -1; bv = b.userRating ?? -1; break
-        case 'year': av = a.releaseYear ?? 0; bv = b.releaseYear ?? 0; break
-        case 'addedDate': av = a.addedDate; bv = b.addedDate; break
-        case 'watchedDate':
-          av = a.watchedDate ? new Date(a.watchedDate).getTime() : 0
-          bv = b.watchedDate ? new Date(b.watchedDate).getTime() : 0
-          break
-        case 'timeRemaining': av = entryTimeRemaining(a); bv = entryTimeRemaining(b); break
-        case 'episodesRemaining': av = entryEpisodesRemaining(a); bv = entryEpisodesRemaining(b); break
-      }
+      const av = keys.get(a.id)!
+      const bv = keys.get(b.id)!
       if (typeof av === 'string') {
         return sortDir === 'asc' ? av.localeCompare(bv as string) : (bv as string).localeCompare(av)
       }
       return sortDir === 'asc' ? av - (bv as number) : (bv as number) - av
     })
-  }, [scopedEntries, search, sort, sortDir])
+  }, [scopedEntries, search, sort, sortDir, tab])
 
   const paged = filtered.slice(0, page * PAGE_SIZE)
   const hasMore = paged.length < filtered.length

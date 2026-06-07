@@ -4,6 +4,7 @@ import { TrendingUp, Clock, Tv, Bookmark, ArrowRight, Star } from 'lucide-react'
 import { getTrending } from '../lib/tmdb'
 import { useStore } from '../lib/store'
 import { cn, posterUrl, fmtDate, fmtRating, effectiveRating } from '../lib/utils'
+import { entryLastWatchedAt } from '../lib/mediaStats'
 import { MediaCard, MediaCardSkeleton } from '../components/shared/MediaCard'
 import { ScrollableRow } from '../components/shared/ScrollableRow'
 import { ContinueWatchingCard } from '../components/shared/ContinueWatchingCard'
@@ -28,10 +29,16 @@ export function Home() {
     .slice(0, 8)
 
   const inProgress = getLibraryByStatus('in_progress')
-  const continueWatching = useMemo(
-    () => inProgress.filter((e) => e.mediaType === 'tv' || e.mediaType === 'anime').slice(0, 50),
-    [inProgress]
-  )
+  const continueWatching = useMemo(() => {
+    const shows = inProgress.filter((e) => e.mediaType === 'tv' || e.mediaType === 'anime')
+    // Precompute last-watched once per show (it scans tvProgress) rather than on
+    // every comparison, then order most-recently-watched first so logging an
+    // episode floats its show to the front.
+    const lastWatched = new Map(shows.map((e): [string, number] => [e.id, entryLastWatchedAt(e)]))
+    return shows
+      .sort((a, b) => lastWatched.get(b.id)! - lastWatched.get(a.id)!)
+      .slice(0, 50)
+  }, [inProgress])
   const watchlist = getLibraryByStatus('watchlist').slice(0, 10)
 
   // Continue Watching lives here, so re-check on mount whether any caught-up show

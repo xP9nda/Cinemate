@@ -236,6 +236,27 @@ export function entryEpisodesRemaining(entry: LibraryEntry): number {
 }
 
 /**
+ * Most recent watch activity for an entry, as a ms timestamp (0 if never watched).
+ * For a show this is the latest episode watch across tvProgress, so an in-progress
+ * show reorders the moment a new episode is logged - `watchedDate` only tracks a
+ * completed title, so it can't drive Continue Watching / In Progress ordering. Falls
+ * back to `watchedDate` for movies and for shows with no episode progress yet.
+ */
+export function entryLastWatchedAt(entry: LibraryEntry): number {
+  let latest = 0
+  for (const p of Object.values(entry.tvProgress ?? {})) {
+    if (!p.watchedAt) continue
+    // Guard against a malformed/legacy date: a NaN from Math.max would poison the
+    // running max and discard every valid episode timestamp.
+    const t = new Date(p.watchedAt).getTime()
+    if (Number.isFinite(t)) latest = Math.max(latest, t)
+  }
+  if (latest) return latest
+  const wd = entry.watchedDate ? new Date(entry.watchedDate).getTime() : 0
+  return Number.isFinite(wd) ? wd : 0
+}
+
+/**
  * Minutes for a single play, read synchronously by the stats and watch-log views.
  * For an episode it prefers the exact per-episode runtime (filled in on a Detail
  * visit) and falls back to the show's average episode runtime; for a movie it's the
