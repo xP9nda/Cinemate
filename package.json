@@ -1,6 +1,6 @@
 {
   "name": "cinemate",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Personal movie & TV tracking app",
   "main": "out/main/index.js",
   "author": "Cinemate",
