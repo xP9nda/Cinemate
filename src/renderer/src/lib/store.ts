@@ -365,7 +365,7 @@ export const useStore = create<AppStore>()(
       }
 
       // Restore the status the entry had before it entered the watchlist (prevStatus), so
-      // watched/in_progress/dropped → watchlist → remove round-trips exactly. If none was
+      // watched/in_progress/dropped -> watchlist -> remove round-trips exactly. If none was
       // recorded (imported data, or added straight to the watchlist) fall back to deriving
       // from the data: we can't verify "fully watched" for a show here - that needs the
       // TMDb episode list, which only the detail view has - so a show with episode progress

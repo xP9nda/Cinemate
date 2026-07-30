@@ -37,8 +37,8 @@ export interface RawImportItem {
   review: string                    // overall review/note
 
   plays: ImportPlay[]               // every play of this title (movies)
-  episodes: Record<string, ImportEpisode>   // "s:e" → per-episode (TV)
-  seasonRatings: Record<number, number>     // season → rating (TV)
+  episodes: Record<string, ImportEpisode>   // "s:e" -> per-episode (TV)
+  seasonRatings: Record<number, number>     // season -> rating (TV)
   airedEpisodes: number | null      // for completeness check (TV)
   listedAt?: number | null          // ms timestamp when added to watchlist
 }

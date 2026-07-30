@@ -31,6 +31,9 @@ interface MediaCardProps {
   onUndrop?: (entry: LibraryEntry) => void
   width?: number   // omit for fluid/grid usage; set explicitly for scroll rows
   showDates?: boolean
+  // Extra context line under the title - the person page uses it for the role
+  // played on that title ("Director, Writer", "Ellen Ripley").
+  subtitle?: string
   className?: string
 }
 
@@ -46,7 +49,7 @@ function detectType(item: TMDbSearchResult, override?: MediaType): MediaType {
 
 export const MediaCard = memo(function MediaCard({
   item, entry: entryProp, mediaType: mediaTypeProp,
-  backLabel, onEdit, onDelete, onUndoRewatch, onUndrop, width, showDates, className
+  backLabel, onEdit, onDelete, onUndoRewatch, onUndrop, width, showDates, subtitle, className
 }: MediaCardProps) {
   const navigate = useNavigate()
 
@@ -297,6 +300,11 @@ export const MediaCard = memo(function MediaCard({
           <div className="flex items-center justify-between mt-0.5">
             {year && <p className="text-[10px] text-white/70 leading-tight">{year}</p>}
           </div>
+          {subtitle && (
+            <p className="text-[10px] text-white/60 leading-tight line-clamp-2 mt-0.5" title={subtitle}>
+              {subtitle}
+            </p>
+          )}
           {showDates && entry && (
             <div className="mt-1 space-y-0.5">
               {entry.watchedDate && (

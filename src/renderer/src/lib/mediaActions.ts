@@ -114,7 +114,7 @@ async function fetchSeasonsThrottled(tvId: number, seasonNumbers: number[], limi
  * authority for the "did watching this episode complete (or catch up) the show?"
  * question that previously lived only in Detail's episode-save handler.
  *
- * - All episodes watched, or (when enabled) all *aired* episodes watched → watched.
+ * - All episodes watched, or (when enabled) all *aired* episodes watched -> watched.
  * - Otherwise a watchlist item becomes in_progress only if autoRemoveWatchlist is on.
  * - An already-watched show stays watched; anything else becomes in_progress.
  *

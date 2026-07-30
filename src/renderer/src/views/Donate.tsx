@@ -81,15 +81,15 @@ export function Donate() {
           <h2 className="font-semibold text-sm text-foreground">Other Ways to Help</h2>
           <ul className="space-y-2 text-sm text-muted-foreground">
             <li className="flex items-start gap-2">
-              <span className="text-primary mt-0.5">•</span>
+              <span className="mt-[0.45rem] h-1.5 w-1.5 flex-shrink-0 rounded-full bg-primary" />
               <span>Share Cinemate with friends who track movies and TV</span>
             </li>
             <li className="flex items-start gap-2">
-              <span className="text-primary mt-0.5">•</span>
+              <span className="mt-[0.45rem] h-1.5 w-1.5 flex-shrink-0 rounded-full bg-primary" />
               <span>Report bugs and suggest features on GitHub</span>
             </li>
             <li className="flex items-start gap-2">
-              <span className="text-primary mt-0.5">•</span>
+              <span className="mt-[0.45rem] h-1.5 w-1.5 flex-shrink-0 rounded-full bg-primary" />
               <span>Leave a review or feedback. It genuinely helps.</span>
             </li>
           </ul>

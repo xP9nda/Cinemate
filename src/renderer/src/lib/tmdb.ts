@@ -1,7 +1,7 @@
 import { getCache, setCache } from './db'
 import type {
   TMDbMovie, TMDbTV, TMDbSeason, TMDbSearchResult,
-  TMDbGenre, TMDbPerson, TMDbExternalIds
+  TMDbGenre, TMDbPerson, TMDbPersonDetails
 } from '../types'
 
 const BASE = 'https://api.themoviedb.org/3'
@@ -181,7 +181,7 @@ export async function getSeason(tvId: number, seasonNumber: number): Promise<TMD
   return apiFetch(`/tv/${tvId}/season/${seasonNumber}`, {}, TTL.detail)
 }
 
-export async function getPerson(id: number): Promise<TMDbPerson & { biography?: string; birthday?: string; homepage?: string | null; imdb_id?: string | null; external_ids?: TMDbExternalIds; movie_credits?: { cast: TMDbSearchResult[] }; tv_credits?: { cast: TMDbSearchResult[] } }> {
+export async function getPerson(id: number): Promise<TMDbPersonDetails> {
   return apiFetch(`/person/${id}`, { append_to_response: 'movie_credits,tv_credits,external_ids' }, TTL.detail)
 }
 

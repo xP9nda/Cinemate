@@ -1,6 +1,6 @@
 import { clsx, type ClassValue } from 'clsx'
 import { twMerge } from 'tailwind-merge'
-import { format, formatDistanceToNow, parseISO } from 'date-fns'
+import { differenceInYears, format, formatDistanceToNow, parseISO } from 'date-fns'
 import type { LibraryEntry, PaginationSettings } from '../types'
 
 export function cn(...inputs: ClassValue[]) {
@@ -95,6 +95,28 @@ export function effectiveRating(
   if (!entry) return null
   if (episodeKey) return entry.tvProgress?.[episodeKey]?.rating ?? null
   return entry.userRating ?? null
+}
+
+/**
+ * Whole years from `birthday` to `at` (default: now) - someone's current age, or
+ * their age when they died if a deathday is passed in. null when either date is
+ * missing or unparseable, or when the result would be nonsense (a birthday in
+ * the future, or TMDb having a deathday earlier than the birthday).
+ */
+export function ageInYears(
+  birthday: string | null | undefined,
+  at?: string | null,
+): number | null {
+  if (!birthday) return null
+  try {
+    const from = parseISO(birthday)
+    const to = at ? parseISO(at) : new Date()
+    if (isNaN(from.getTime()) || isNaN(to.getTime())) return null
+    const years = differenceInYears(to, from)
+    return years < 0 ? null : years
+  } catch {
+    return null
+  }
 }
 
 export function releaseYear(dateStr: string | null | undefined): number | null {

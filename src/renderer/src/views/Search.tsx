@@ -257,6 +257,11 @@ function PersonCard({ person }: { person: TMDbPerson }) {
   const imgSrc = person.profile_path
     ? `https://image.tmdb.org/t/p/w185${person.profile_path}`
     : null
+  const knownFor = (person.known_for ?? [])
+    .map((k) => k.title || k.name)
+    .filter(Boolean)
+    .slice(0, 2)
+    .join(', ')
 
   return (
     <button
@@ -275,6 +280,9 @@ function PersonCard({ person }: { person: TMDbPerson }) {
       <div className="min-w-0">
         <p className="text-sm font-medium truncate">{person.name}</p>
         <p className="text-xs text-muted-foreground truncate">{person.known_for_department}</p>
+        {/* The titles TMDb thinks they're best known for - far more identifying
+            than a bare department when several people share a name. */}
+        {knownFor && <p className="text-[11px] text-muted-foreground/70 truncate" title={knownFor}>{knownFor}</p>}
       </div>
     </button>
   )

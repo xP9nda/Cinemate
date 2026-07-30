@@ -63,6 +63,7 @@ export interface TMDbTV {
   number_of_episodes: number
   genres: Array<{ id: number; name: string }>
   networks?: Array<{ id: number; name: string; logo_path: string | null }>
+  created_by?: TMDbCreatedBy[]
   credits?: {
     cast: TMDbCastMember[]
     crew: TMDbCrewMember[]
@@ -140,6 +141,13 @@ export interface TMDbCrewMember {
   profile_path: string | null
 }
 
+/** A show's creator(s), from the /tv/{id} response. */
+export interface TMDbCreatedBy {
+  id: number
+  name: string
+  profile_path: string | null
+}
+
 export interface TMDbVideo {
   id: string
   key: string
@@ -190,7 +198,48 @@ export interface TMDbPerson {
   name: string
   profile_path: string | null
   known_for_department: string
-  known_for: TMDbSearchResult[]
+  // Only present on search results - /person/{id} never returns it.
+  known_for?: TMDbSearchResult[]
+}
+
+/**
+ * One credit from a person's filmography. Covers all four arrays TMDb returns
+ * under movie_credits / tv_credits: cast credits carry `character`, crew credits
+ * carry `job` + `department`, and TV credits add `episode_count`. Which array it
+ * came from is what decides movie vs. show, so there's no media_type here.
+ */
+export interface TMDbPersonCredit {
+  id: number
+  credit_id: string
+  title?: string             // movies
+  name?: string              // shows
+  poster_path: string | null
+  backdrop_path?: string | null
+  release_date?: string      // movies
+  first_air_date?: string    // shows
+  vote_average: number
+  vote_count?: number
+  popularity?: number
+  genre_ids?: number[]
+  origin_country?: string[]
+  character?: string
+  job?: string
+  department?: string
+  episode_count?: number
+}
+
+/** The /person/{id} response, with movie_credits, tv_credits and external_ids appended. */
+export interface TMDbPersonDetails extends TMDbPerson {
+  biography?: string
+  birthday?: string | null
+  deathday?: string | null
+  place_of_birth?: string | null
+  also_known_as?: string[]
+  homepage?: string | null
+  imdb_id?: string | null
+  external_ids?: TMDbExternalIds
+  movie_credits?: { cast: TMDbPersonCredit[]; crew: TMDbPersonCredit[] }
+  tv_credits?: { cast: TMDbPersonCredit[]; crew: TMDbPersonCredit[] }
 }
 
 export interface TMDbGenre {

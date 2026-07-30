@@ -1,24 +1,33 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
-import { ArrowLeft, Calendar, MapPin, ExternalLink } from 'lucide-react'
+import { ArrowLeft, Cake, Cross, MapPin, ExternalLink, Search, Film, SearchX } from 'lucide-react'
 import { getPerson } from '../lib/tmdb'
-import { profileUrl, fmtDate } from '../lib/utils'
+import { cn, profileUrl, fmtDate, ageInYears } from '../lib/utils'
+import {
+  ACTING, buildPersonCredits, creditRoleLabel, creditToSearchResult, filterCredits,
+  sortDepartments, type CreditMediaType, type CreditSort,
+} from '../lib/credits'
 import { Button } from '../components/ui/button'
+import { Badge } from '../components/ui/badge'
+import { Input } from '../components/ui/input'
 import { ScrollArea } from '../components/ui/scroll-area'
 import { Skeleton } from '../components/ui/skeleton'
-import { ScrollableRow } from '../components/shared/ScrollableRow'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
+import { EmptyState } from '../components/shared/EmptyState'
 import { MediaCard } from '../components/shared/MediaCard'
-import type { TMDbPerson, TMDbSearchResult, TMDbExternalIds } from '../types'
+import type { TMDbPersonDetails } from '../types'
 
-type PersonData = TMDbPerson & {
-  biography?: string
-  birthday?: string
-  place_of_birth?: string
-  homepage?: string | null
-  imdb_id?: string | null
-  external_ids?: TMDbExternalIds
-  movie_credits?: { cast: TMDbSearchResult[] }
-  tv_credits?: { cast: TMDbSearchResult[] }
+// Filmography grows in chunks rather than mounting every credit at once - a
+// prolific crew member can carry 500+, and each card is a live store subscriber
+// with its own menus.
+const CREDITS_PAGE = 60
+
+const SORT_LABELS: Record<CreditSort, string> = {
+  newest: 'Newest first',
+  oldest: 'Oldest first',
+  rating: 'Highest rated',
+  popularity: 'Most popular',
+  title: 'Title (A-Z)',
 }
 
 export function Person() {
@@ -28,19 +37,41 @@ export function Person() {
   const rawBack = (location.state as { backLabel?: string } | null)?.backLabel
   const backLabel = rawBack ? `Back to ${rawBack}` : 'Back'
 
-  const [person, setPerson] = useState<PersonData | null>(null)
+  const [person, setPerson] = useState<TMDbPersonDetails | null>(null)
   const [loading, setLoading] = useState(true)
   const [expanded, setExpanded] = useState(false)
+
+  // Filmography controls
+  const [search, setSearch] = useState('')
+  const [department, setDepartment] = useState<string | 'all'>('all')
+  const [mediaType, setMediaType] = useState<CreditMediaType | 'all'>('all')
+  const [sort, setSort] = useState<CreditSort>('newest')
+  const [visible, setVisible] = useState(CREDITS_PAGE)
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
+    setExpanded(false)
+    setSearch(''); setDepartment('all'); setMediaType('all'); setSort('newest')
     getPerson(Number(id))
-      .then((data) => { if (!cancelled) setPerson(data as PersonData) })
+      .then((data) => { if (!cancelled) setPerson(data) })
       .catch((err) => { if (!cancelled) console.error(err) })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [id])
+
+  const credits = useMemo(() => buildPersonCredits(person), [person])
+  const departments = useMemo(
+    () => sortDepartments([...new Set(credits.flatMap((c) => c.departments))]),
+    [credits]
+  )
+  const shown = useMemo(
+    () => filterCredits(credits, { search, department, mediaType, sort }),
+    [credits, search, department, mediaType, sort]
+  )
+
+  // Any control change starts the list over from the top.
+  useEffect(() => { setVisible(CREDITS_PAGE) }, [search, department, mediaType, sort])
 
   if (loading) return <PersonSkeleton />
 
@@ -53,16 +84,14 @@ export function Person() {
     </div>
   )
 
-  const allMovies = Array.from(new Map((person.movie_credits?.cast ?? []).map((m) => [m.id, m])).values())
-    .sort((a, b) => (b.vote_count ?? 0) - (a.vote_count ?? 0))
-  const movies = allMovies.slice(0, 20)
-
-  const allShows = Array.from(new Map((person.tv_credits?.cast ?? []).map((s) => [s.id, s])).values())
-    .sort((a, b) => (b.vote_count ?? 0) - (a.vote_count ?? 0))
-  const shows = allShows.slice(0, 20)
-
   const bio = person.biography ?? ''
   const bioShort = bio.length > 400
+
+  // Age counts up to today while they're alive, and freezes at the deathday
+  // once TMDb has one.
+  const age = ageInYears(person.birthday, person.deathday)
+  const movieCount = credits.filter((c) => c.mediaType === 'movie').length
+  const showCount = credits.filter((c) => c.mediaType === 'tv').length
 
   // External links surfaced from the TMDb response (homepage, IMDb, socials).
   // People use /name/ on IMDb (vs. /title/ for titles) and /person/ on TMDb.
@@ -81,7 +110,7 @@ export function Person() {
 
   return (
     <ScrollArea className="h-full">
-      <div className="view-container p-6 max-w-4xl mx-auto">
+      <div className="view-container p-6 max-w-5xl mx-auto">
         <Button
           variant="ghost"
           size="sm"
@@ -91,7 +120,7 @@ export function Person() {
           <ArrowLeft className="h-4 w-4" /> {backLabel}
         </Button>
 
-        <div className="flex gap-6">
+        <div className="flex flex-col sm:flex-row gap-6">
           {/* Profile photo */}
           <div className="flex-shrink-0">
             {person.profile_path ? (
@@ -109,21 +138,51 @@ export function Person() {
 
           {/* Info */}
           <div className="flex-1 min-w-0">
-            <h1 className="font-serif text-3xl font-normal">{person.name}</h1>
-            <div className="flex flex-wrap gap-3 mt-2 text-sm text-muted-foreground">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="font-serif text-3xl font-normal">{person.name}</h1>
+              {person.known_for_department && (
+                <Badge variant="secondary" className="text-xs">{person.known_for_department}</Badge>
+              )}
+              {person.deathday && <Badge variant="outline" className="text-xs">Deceased</Badge>}
+            </div>
+
+            <div className="flex flex-wrap gap-x-4 gap-y-1.5 mt-2.5 text-sm text-muted-foreground">
               {person.birthday && (
                 <span className="flex items-center gap-1.5">
-                  <Calendar className="h-3.5 w-3.5" />
+                  <Cake className="h-3.5 w-3.5 flex-shrink-0" />
                   {fmtDate(person.birthday, 'MMMM d, yyyy')}
+                  {age != null && !person.deathday && <span className="text-muted-foreground/70">(age {age})</span>}
+                </span>
+              )}
+              {person.deathday && (
+                <span className="flex items-center gap-1.5">
+                  <Cross className="h-3.5 w-3.5 flex-shrink-0" />
+                  {fmtDate(person.deathday, 'MMMM d, yyyy')}
+                  {age != null && <span className="text-muted-foreground/70">(aged {age})</span>}
                 </span>
               )}
               {person.place_of_birth && (
                 <span className="flex items-center gap-1.5">
-                  <MapPin className="h-3.5 w-3.5" />
+                  <MapPin className="h-3.5 w-3.5 flex-shrink-0" />
                   {person.place_of_birth}
                 </span>
               )}
+              {credits.length > 0 && (
+                <span className="flex items-center gap-1.5">
+                  <Film className="h-3.5 w-3.5 flex-shrink-0" />
+                  {movieCount > 0 && `${movieCount} ${movieCount === 1 ? 'film' : 'films'}`}
+                  {movieCount > 0 && showCount > 0 && ', '}
+                  {showCount > 0 && `${showCount} ${showCount === 1 ? 'show' : 'shows'}`}
+                </span>
+              )}
             </div>
+
+            {person.also_known_as && person.also_known_as.length > 0 && (
+              <p className="mt-2 text-xs text-muted-foreground/80">
+                <span className="text-muted-foreground">Also known as</span>{' '}
+                {person.also_known_as.slice(0, 4).join(', ')}
+              </p>
+            )}
 
             {externalLinks.length > 0 && (
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 mt-3">
@@ -145,8 +204,8 @@ export function Person() {
 
             {bio && (
               <div className="mt-4">
-                <p className="text-sm text-muted-foreground leading-relaxed">
-                  {bioShort && !expanded ? bio.slice(0, 400) + '...' : bio}
+                <p className="text-sm text-muted-foreground leading-relaxed whitespace-pre-line">
+                  {bioShort && !expanded ? bio.slice(0, 400).trimEnd() + '...' : bio}
                 </p>
                 {bioShort && (
                   <button
@@ -161,37 +220,117 @@ export function Person() {
           </div>
         </div>
 
-        {movies.length > 0 && (
+        {/* Filmography */}
+        {credits.length > 0 && (
           <section className="mt-10">
-            <h2 className="font-semibold text-sm mb-3">Movies <span className="text-muted-foreground font-normal">{allMovies.length}</span></h2>
-            <ScrollableRow>
-              {movies.map((item) => (
-                <MediaCard
-                  key={item.id}
-                  item={{ ...item, media_type: 'movie' }}
-                  mediaType="movie"
-                  backLabel={person.name}
-                  width={160}
+            <div className="flex flex-wrap items-center gap-2 mb-3">
+              <h2 className="font-semibold text-sm mr-1">
+                Filmography <span className="text-muted-foreground font-normal">{credits.length}</span>
+              </h2>
+              <div className="relative flex-1 min-w-40">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                <Input
+                  placeholder="Search titles and roles..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="pl-8 h-8 w-full text-sm"
+                  aria-label="Search filmography"
                 />
-              ))}
-            </ScrollableRow>
-          </section>
-        )}
+              </div>
+              <Select value={mediaType} onValueChange={(v) => setMediaType(v as CreditMediaType | 'all')}>
+                <SelectTrigger className="h-8 w-28 text-xs" aria-label="Filter by media type">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All media</SelectItem>
+                  <SelectItem value="movie">Movies</SelectItem>
+                  <SelectItem value="tv">TV shows</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={sort} onValueChange={(v) => setSort(v as CreditSort)}>
+                <SelectTrigger className="h-8 w-36 text-xs" aria-label="Sort filmography">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(Object.keys(SORT_LABELS) as CreditSort[]).map((key) => (
+                    <SelectItem key={key} value={key}>{SORT_LABELS[key]}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
 
-        {shows.length > 0 && (
-          <section className="mt-8">
-            <h2 className="font-semibold text-sm mb-3">TV Shows <span className="text-muted-foreground font-normal">{allShows.length}</span></h2>
-            <ScrollableRow>
-              {shows.map((item) => (
-                <MediaCard
-                  key={item.id}
-                  item={{ ...item, media_type: 'tv' }}
-                  mediaType="tv"
-                  backLabel={person.name}
-                  width={160}
-                />
-              ))}
-            </ScrollableRow>
+            {/* Department tabs - only the ones this person actually has credits in */}
+            {departments.length > 1 && (
+              <div className="flex flex-wrap gap-1 mb-4">
+                {['all', ...departments].map((dep) => {
+                  const count = dep === 'all'
+                    ? credits.length
+                    : credits.filter((c) => c.departments.includes(dep)).length
+                  return (
+                    <button
+                      key={dep}
+                      onClick={() => setDepartment(dep)}
+                      className={cn(
+                        'px-2.5 py-1 text-xs font-medium rounded-md cursor-pointer transition-colors whitespace-nowrap border',
+                        department === dep
+                          ? 'bg-card text-foreground border-border/60 shadow-sm'
+                          : 'text-muted-foreground border-transparent hover:text-foreground hover:bg-card/40'
+                      )}
+                    >
+                      {dep === 'all' ? 'All' : dep === ACTING ? 'Acting' : dep}
+                      <span className="ml-1 text-muted-foreground/70">{count}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+
+            {shown.length === 0 ? (
+              <EmptyState
+                icon={SearchX}
+                title="No matching credits"
+                description="Try a different search term or clear the filters."
+                action={
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => { setSearch(''); setDepartment('all'); setMediaType('all') }}
+                  >
+                    Clear filters
+                  </Button>
+                }
+              />
+            ) : (
+              <>
+                <div
+                  className="grid gap-3"
+                  style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))' }}
+                >
+                  {shown.slice(0, visible).map((credit) => (
+                    // No explicit mediaType: the credit carries genre_ids and
+                    // origin_country, so MediaCard's own detection still sorts
+                    // Japanese animation into 'anime' like every other grid.
+                    <MediaCard
+                      key={credit.key}
+                      item={creditToSearchResult(credit)}
+                      backLabel={person.name}
+                      subtitle={creditRoleLabel(credit)}
+                    />
+                  ))}
+                </div>
+                {shown.length > visible && (
+                  <div className="flex justify-center pt-5">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setVisible((v) => v + CREDITS_PAGE)}
+                    >
+                      Load More ({shown.length - visible} left)
+                    </Button>
+                  </div>
+                )}
+              </>
+            )}
           </section>
         )}
       </div>
@@ -201,14 +340,22 @@ export function Person() {
 
 function PersonSkeleton() {
   return (
-    <div className="p-6 max-w-4xl mx-auto space-y-4">
+    <div className="p-6 max-w-5xl mx-auto space-y-4">
       <Skeleton className="h-8 w-20" />
       <div className="flex gap-6">
         <Skeleton className="w-36 h-52 rounded-xl flex-shrink-0" />
         <div className="flex-1 space-y-3">
           <Skeleton className="h-8 w-48" />
-          <Skeleton className="h-4 w-32" />
+          <Skeleton className="h-4 w-64" />
           <Skeleton className="h-24 w-full" />
+        </div>
+      </div>
+      <div className="pt-6 space-y-3">
+        <Skeleton className="h-8 w-full" />
+        <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))' }}>
+          {Array.from({ length: 12 }, (_, i) => (
+            <Skeleton key={i} className="w-full aspect-[2/3] rounded-lg" />
+          ))}
         </div>
       </div>
     </div>

@@ -1,13 +1,14 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import {
-  ArrowLeft, Star, Clock, Calendar, Tv, Bookmark, Plus, Check,
+  ArrowLeft, Star, Clock, Calendar, Tv, Bookmark, Plus, Check, Clapperboard,
   ChevronDown, ChevronRight, ChevronUp, History, Trash2, List, Repeat2, Loader2, X, Ban, Zap,
   ExternalLink, MoreHorizontal, RotateCcw, Undo2, Pencil
 } from 'lucide-react'
 
 import { getMovie, getTV, getSeason } from '../lib/tmdb'
 import { useStore } from '../lib/store'
+import { keyCrewGroups, type CrewGroup } from '../lib/credits'
 import type { MediaTarget, CatalogEpisode } from '../lib/mediaActions'
 import {
   cn, backdropUrl, posterUrl, fmtRuntime, fmtDate,
@@ -248,6 +249,13 @@ export function Detail() {
   if (ext?.facebook_id) externalLinks.push({ label: 'Facebook', href: `https://www.facebook.com/${ext.facebook_id}` })
   if (ext?.instagram_id) externalLinks.push({ label: 'Instagram', href: `https://www.instagram.com/${ext.instagram_id}` })
   if (ext?.twitter_id) externalLinks.push({ label: 'X', href: `https://twitter.com/${ext.twitter_id}` })
+
+  // Key crew (director / creator / writers / music / camera). A show has no
+  // single director, so its `created_by` fills that slot instead.
+  const crewGroups = keyCrewGroups(
+    movie?.credits?.crew ?? tv?.credits?.crew,
+    tv?.created_by
+  )
 
   // One reference to this title carrying full TMDb metadata, so any action that
   // has to create a library entry starts from complete data. Every media action
@@ -528,6 +536,15 @@ export function Detail() {
                     <Clock className="h-3.5 w-3.5" />
                     {fmtRuntime(totalRuntime)}
                   </span>
+                )}
+                {/* Crew rides along in this already-wrapping row so it costs no
+                    vertical space; the chip names whoever led the title and opens
+                    the rest on click. */}
+                {crewGroups.length > 0 && (
+                  <CrewCredits
+                    groups={crewGroups}
+                    onSelect={(personId) => navigate(`/person/${personId}`, { state: { backLabel: title } })}
+                  />
                 )}
               </div>
               {externalLinks.length > 0 && (
@@ -1230,6 +1247,61 @@ export function Detail() {
         </DialogContent>
       </Dialog>
     </ScrollArea>
+  )
+}
+
+/**
+ * Crew as a single chip in the title's metadata row, opening the full list on
+ * click. The top of a detail page is the most contested vertical space on the
+ * screen, so nothing here is allowed its own line: the chip names whoever led the
+ * title (its director, or a show's creator) and everything else lives in the
+ * popover. Every name navigates to that person's page, so a director's other work
+ * - directing included, not just acting - is one click from any title they made.
+ */
+function CrewCredits({ groups, onSelect }: { groups: CrewGroup[]; onSelect: (personId: number) => void }) {
+  const [open, setOpen] = useState(false)
+  const lead = groups[0]
+  const leadNames = lead.people.map((p) => p.name).join(', ')
+  const others = groups.length - 1
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          className="flex items-center gap-1 min-w-0 hover:text-foreground transition-colors cursor-pointer"
+          aria-label={`Crew: ${lead.label} ${leadNames}`}
+        >
+          <Clapperboard className="h-3.5 w-3.5 flex-shrink-0" />
+          <span className="truncate max-w-[13rem]">{leadNames}</span>
+          {others > 0 && <span className="text-muted-foreground/60 flex-shrink-0">+{others}</span>}
+          <ChevronDown className="h-3 w-3 flex-shrink-0 opacity-60" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-64 p-3" align="start">
+        <dl className="space-y-2">
+          {groups.map((group) => (
+            <div key={group.label}>
+              <dt className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
+                {group.label}
+              </dt>
+              <dd className="text-xs leading-snug break-words">
+                {group.people.map((person, i) => (
+                  <React.Fragment key={person.id}>
+                    {i > 0 && <span className="text-muted-foreground/60">, </span>}
+                    <button
+                      onClick={() => { setOpen(false); onSelect(person.id) }}
+                      className="text-left text-foreground hover:text-primary hover:underline cursor-pointer"
+                    >
+                      {person.name}
+                    </button>
+                  </React.Fragment>
+                ))}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      </PopoverContent>
+    </Popover>
   )
 }
 

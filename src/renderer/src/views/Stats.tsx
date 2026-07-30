@@ -262,10 +262,10 @@ export function Stats() {
   const maxStars = settings.ratingSystem === '5star' ? 5 : 10
 
   // One rating per distinct thing the user rated - never per play:
-  //   • each movie            → its overall rating (userRating)
-  //   • each TV / anime show  → its overall rating (userRating)
-  //   • each season           → its rating (seasonRatings[n])
-  //   • each episode          → its individual rating (tvProgress[key].rating)
+  //   - each movie            -> its overall rating (userRating)
+  //   - each TV / anime show  -> its overall rating (userRating)
+  //   - each season           -> its rating (seasonRatings[n])
+  //   - each episode          -> its individual rating (tvProgress[key].rating)
   // All of these live on the library entry, so the distribution is derived from
   // the library rather than from watch history (where a title rated across N
   // plays would otherwise be counted N times, and plays carry no rating at all).

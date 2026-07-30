@@ -46,7 +46,7 @@ export function MediaStatsBar({ stats, emphasizeRemaining = false, className }: 
       {!runtimeResolved ? (
         <span className="inline-flex items-center gap-1 text-muted-foreground/70">
           <Loader2 className="h-3 w-3 animate-spin" />
-          Calculating runtime…
+          Calculating runtime...
         </span>
       ) : totalRuntime > 0 && (
         emphasizeRemaining ? (

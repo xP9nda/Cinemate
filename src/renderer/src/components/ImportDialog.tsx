@@ -318,7 +318,7 @@ export function ImportDialog({ open, onOpenChange, initialSource }: Props) {
     let stepsDone = 0
     const failed: string[] = []
 
-    // Build a title|year → tmdbId reverse-lookup from the existing library so
+    // Build a title|year -> tmdbId reverse-lookup from the existing library so
     // Letterboxd re-imports can skip searchMoviesWithYear for known titles.
     const lbTitleYearToTmdbId = new Map<string, number>()
     if (parsed.source === 'letterboxd') {
@@ -422,7 +422,7 @@ export function ImportDialog({ open, onOpenChange, initialSource }: Props) {
           genreIds = (d.genres ?? []).map(g => g.id)
           runtime = await deriveShowRuntime(d)
           episodeCount = d.number_of_episodes ?? null
-          // Japanese animation → 'anime' so it filters separately from TV.
+          // Japanese animation -> 'anime' so it filters separately from TV.
           if ((d.origin_country?.includes('JP') ?? false) && genreIds.includes(16)) {
             effectiveMediaType = 'anime'
           }
@@ -670,7 +670,7 @@ export function ImportDialog({ open, onOpenChange, initialSource }: Props) {
     // ── Lists ────────────────────────────────────────────────────────────────
     let listsImported = 0
     if (options.lists && parsed.lists.length > 0) {
-      // libId → set of listIds it belongs to
+      // libId -> set of listIds it belongs to
       const entryListIds: Record<string, Set<string>> = {}
       const listsByName = new Map<string, CustomList>()
       for (const l of currentLists) listsByName.set(l.name.trim().toLowerCase(), l)

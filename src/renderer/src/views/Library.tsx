@@ -357,7 +357,7 @@ export function Library() {
                 : tab === 'rewatching' ? 'Nothing being rewatched'
                 : `Nothing ${tab === 'all' ? 'in your library' : `in ${tab.replace(/_/g, ' ')}`}`}
               description={search ? 'Try a different search term.'
-                : tab === 'rewatching' ? 'Start a rewatch from a show’s page to see it here.'
+                : tab === 'rewatching' ? "Start a rewatch from a show's page to see it here."
                 : 'Start tracking by searching for movies and TV shows.'}
             />
           ) : (view === 'grid' || tab === 'in_progress') ? (

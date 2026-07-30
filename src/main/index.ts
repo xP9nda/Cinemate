@@ -201,7 +201,7 @@ function createWindow(): void {
         shell.openExternal(details.url)
       }
     } catch {
-      // Invalid URL — silently drop
+      // Invalid URL - silently drop
     }
     return { action: 'deny' }
   })
@@ -209,7 +209,7 @@ function createWindow(): void {
   // Block navigation away from the app. We allow only navigation to the same
   // page the renderer was originally loaded from (router reloads, hash changes)
   // and route http(s) externally via the shell. File:// navigation to any other
-  // path is rejected — a compromised renderer could otherwise navigate to
+  // path is rejected - a compromised renderer could otherwise navigate to
   // arbitrary local files and exfiltrate their contents.
   const isDev = is.dev && !!process.env['ELECTRON_RENDERER_URL']
   const initialUrl = isDev
@@ -304,7 +304,7 @@ app.whenReady().then(() => {
 })
 
 // Pause `app.quit()` until the renderer flushes pending debounced writes.
-// Without this, `window-all-closed` → `app.quit()` tears down the main process
+// Without this, `window-all-closed` -> `app.quit()` tears down the main process
 // before the renderer's beforeunload IPC round-trip can complete and the last
 // mutations are lost.
 let isFlushing = false

@@ -38,7 +38,30 @@ src/
       ui/           Radix UI + Tailwind primitives (Button, Dialog, etc.)
       layout/       TitleBar, Sidebar, Layout
       shared/       PosterCard, RatingInput, LogEntryModal, MediaEditSheet
-    views/          One file per route (Home, Search, Detail, Library…)
+    views/          One file per route (Home, Search, Detail, Library, ...)
+```
+
+## Character Rules
+Typographic characters that read as AI-generated are **not permitted** anywhere in
+this repo: not in UI copy, code, comments, commit messages or docs.
+
+| Banned | Use instead |
+| --- | --- |
+| `—` em dash | ` - ` (spaced hyphen), or split the sentence |
+| `–` en dash | `-` for ranges (`2019-2024`), ` - ` as punctuation |
+| `·` middle dot | `,` in prose, `/` in compact labels, or a rendered separator element |
+| `…` ellipsis | `...` (three periods) |
+| `“ ” ‘ ’` curly quotes | `"` and `'` |
+| `•` bullet, `→` arrow, `✓` check, etc. | in UI: a lucide icon. In comments: `-` and `->` |
+
+Where a separator is decorative rather than textual, prefer iconography or layout
+(flex `gap`, a bordered element) over a punctuation character. The box-drawing
+`─` in `// ─── Section ───` comment banners is an established convention in this
+codebase and is fine - it is a divider, not punctuation.
+
+To check the tree:
+```bash
+grep -rn -e '—' -e '–' -e '·' -e '…' -e '“' -e '”' -e '’' -e '•' -e '→' -e '✓' src/
 ```
 
 ## Key Notes
