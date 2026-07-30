@@ -5,13 +5,14 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { useStore } from '../lib/store'
 import { useMediaStats, isEpisodeItem, parseEpisodeItem } from '../lib/mediaStats'
 import type { LibraryEntry, ListItemMeta, ListRules } from '../types'
-import { cn, posterUrl, fmtDate, fmtRating, statusLabel, resolvePageSize, DEFAULT_PAGINATION, effectiveRating } from '../lib/utils'
+import { cn, posterUrl, fmtDate, fmtRating, resolvePageSize, DEFAULT_PAGINATION, effectiveRating } from '../lib/utils'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip'
 import { Badge } from '../components/ui/badge'
 import { EmptyState } from '../components/shared/EmptyState'
+import { MediaCard } from '../components/shared/MediaCard'
 import { MarkdownContent } from '../components/shared/MarkdownContent'
 import { ListFormModal } from '../components/shared/ListFormModal'
 import { MediaStatsBar } from '../components/shared/MediaStatsBar'
@@ -42,7 +43,8 @@ function readLS<T extends string>(key: string, allowed: readonly T[], fallback: 
  * Build a display-only LibraryEntry for a list item that isn't in the library.
  * The card and the sort/filter pipeline only read title/year/mediaType/poster
  * for these; the watch-status fields stay neutral and are never rendered for a
- * standalone item (the card hides them when inLibrary is false).
+ * standalone item, because MediaCard resolves status, rating and play state from
+ * the store by id rather than from the entry it is handed.
  */
 function synthEntry(id: string, meta: ListItemMeta): LibraryEntry {
   return {
@@ -121,6 +123,18 @@ export function ListDetail() {
   }), [itemIds, library, itemMeta])
 
   const stats = useMediaStats(validItemIds, library, itemMeta)
+
+  // Play counts for every card in one pass over the watch history, keyed by
+  // media id for a title and "mediaId::epKey" for an episode. Counting per card
+  // instead re-scanned the whole history once per rendered item.
+  const playCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const h of watchHistory) {
+      const key = h.episodeKey ? `${h.mediaId}::${h.episodeKey}` : h.mediaId
+      counts.set(key, (counts.get(key) ?? 0) + 1)
+    }
+    return counts
+  }, [watchHistory])
 
   const [search, setSearch] = useState(() => localStorage.getItem(LS.search) ?? '')
   const [mediaFilter, setMediaFilter] = useState<MediaFilter>(
@@ -447,31 +461,33 @@ export function ListDetail() {
                     if (isEpisodeItem(itemId)) {
                       const { libId, episodeKey } = parseEpisodeItem(itemId)
                       const show = library[libId]!
-                      const plays = watchHistory.filter(h => h.mediaId === libId && h.episodeKey === episodeKey).length
                       return (
                         <EpisodeListCard
                           key={itemId}
                           show={show}
                           episodeKey={episodeKey}
-                          playCount={plays}
+                          playCount={playCounts.get(itemId) ?? 0}
                           ratingSystem={ratingSystem}
                           onNavigate={() => navigate(`/detail/${show.mediaType}/${show.tmdbId}`, { state: { backLabel: 'List' } })}
                           onRemove={isSmart ? undefined : () => handleRemove(itemId)}
                         />
                       )
                     }
-                    const inLibrary = library[itemId] !== undefined
+                    // Library-backed items pass their live entry; a standalone
+                    // item passes a synthesized one. MediaCard reads watch state
+                    // from the store rather than the prop, so a standalone item
+                    // correctly shows no status, rating or play badge.
                     const entry = resolveEntry(itemId)!
-                    const plays = inLibrary ? watchHistory.filter(h => h.mediaId === entry.id && !h.episodeKey).length : 0
                     return (
-                      <ListItemCard
+                      <MediaCard
                         key={itemId}
                         entry={entry}
-                        inLibrary={inLibrary}
-                        playCount={plays}
-                        ratingSystem={ratingSystem}
-                        onNavigate={() => navigate(`/detail/${entry.mediaType}/${entry.tmdbId}`, { state: { backLabel: 'List' } })}
+                        backLabel="List"
+                        width={CARD_WIDTH}
+                        playCount={playCounts.get(itemId) ?? 0}
+                        showReview
                         onRemove={isSmart ? undefined : () => handleRemove(itemId)}
+                        removeLabel="Remove from list"
                       />
                     )
                   })}
@@ -500,108 +516,6 @@ export function ListDetail() {
       initialRules={list.rules}
     />
     </>
-  )
-}
-
-interface ListItemCardProps {
-  entry: ReturnType<typeof useStore.getState>['library'][string]
-  inLibrary: boolean
-  playCount: number
-  ratingSystem: '10star' | '5star'
-  onNavigate: () => void
-  onRemove?: () => void
-}
-
-function ListItemCard({ entry, inLibrary, playCount, ratingSystem, onNavigate, onRemove }: ListItemCardProps) {
-  const [imgLoaded, setImgLoaded] = useState(false)
-  const imgSrc = posterUrl(entry.posterPath, 'w300')
-  const hasReview = !!entry.review?.trim()
-  const watched = entry.watchedDate ? fmtDate(entry.watchedDate, 'MMM d, yyyy') : null
-  const showRewatchBadge = playCount > 1
-  const showWatched = entry.status === 'watched' && watched
-
-  return (
-    <div
-      className="group relative rounded-lg cursor-pointer focus-within:ring-2 focus-within:ring-ring"
-      onClick={onNavigate}
-      role="article"
-      aria-label={entry.title}
-    >
-      <div className="relative w-full aspect-[2/3] rounded-lg overflow-hidden bg-secondary ring-1 ring-border/40 group-hover:ring-primary/50 transition-all duration-200">
-        {!imgLoaded && <div className="absolute inset-0 skeleton" />}
-        {imgSrc ? (
-          <img
-            src={imgSrc}
-            alt={entry.title}
-            className={cn(
-              'absolute inset-0 w-full h-full object-cover transition-all duration-300 group-hover:scale-[1.03]',
-              imgLoaded ? 'opacity-100' : 'opacity-0'
-            )}
-            onLoad={() => setImgLoaded(true)}
-            loading="lazy"
-          />
-        ) : (
-          <div className="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground p-2 text-center">
-            {entry.title}
-          </div>
-        )}
-
-        {/* Remove button - top right (hover) */}
-        {onRemove && (
-          <div className="absolute top-1.5 right-1.5 z-20 opacity-0 group-hover:opacity-100 transition-opacity">
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              className="h-6 w-6 bg-black/50 hover:bg-destructive/80 text-white rounded-md"
-              onClick={(e) => { e.stopPropagation(); onRemove() }}
-              aria-label="Remove from list"
-            >
-              <Trash2 className="h-3 w-3" />
-            </Button>
-          </div>
-        )}
-
-        {/* Bottom gradient overlay - all info lives here */}
-        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black via-black/80 to-transparent pt-12 pb-2.5 px-2.5">
-          {(showRewatchBadge || hasReview) && (
-            <div className="flex items-center gap-1 mb-1.5">
-              {showRewatchBadge && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span className="inline-flex items-center gap-0.5 rounded-full bg-black/65 px-1.5 py-0.5 text-[10px] text-white">
-                      <Repeat2 className="h-2.5 w-2.5" /> {playCount}
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent>{playCount} plays</TooltipContent>
-                </Tooltip>
-              )}
-              {hasReview && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span className="inline-flex items-center justify-center rounded-full bg-black/65 px-1 py-0.5">
-                      <MessageSquare className="h-2.5 w-2.5 text-white" />
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent>Has review</TooltipContent>
-                </Tooltip>
-              )}
-            </div>
-          )}
-          {entry.userRating != null && (
-            <span className="flex items-center gap-0.5 text-[10px] text-warning font-medium ml-auto">
-              <Star className="h-2.5 w-2.5 fill-warning" />
-              {fmtRating(entry.userRating, ratingSystem)}
-            </span>
-          )}
-          <p className="text-[11px] font-semibold text-white line-clamp-2 leading-tight">{entry.title}</p>
-          <p className="text-[10px] text-white/70 leading-tight truncate mt-0.5">
-            {inLibrary
-              ? (showWatched ? `Watched ${watched}` : statusLabel(entry.status))
-              : (entry.releaseYear ?? '')}
-          </p>
-        </div>
-      </div>
-    </div>
   )
 }
 

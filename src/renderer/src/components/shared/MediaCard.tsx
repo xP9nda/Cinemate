@@ -1,6 +1,6 @@
 import { useState, useRef, memo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Eye, Bookmark, Star, Edit2, Trash2, MoreHorizontal, Archive, Loader2, Play, X, RotateCcw, Undo2 } from 'lucide-react'
+import { Eye, Bookmark, Star, Edit2, Trash2, MoreHorizontal, Archive, Loader2, Play, X, RotateCcw, Undo2, Repeat2, MessageSquare } from 'lucide-react'
 import { cn, posterUrl, releaseYear, fmtRating, fmtDate } from '../../lib/utils'
 import { useStore } from '../../lib/store'
 import type { MediaTarget } from '../../lib/mediaActions'
@@ -29,6 +29,17 @@ interface MediaCardProps {
   onDelete?: (entry: LibraryEntry) => void
   onUndoRewatch?: (entry: LibraryEntry) => void
   onUndrop?: (entry: LibraryEntry) => void
+  // Detach this card from its container (removing a list item). Unlike the
+  // library actions above this needs no library entry, so it still works for a
+  // list item that was never added to the library.
+  onRemove?: () => void
+  removeLabel?: string
+  // Plays of this title. Shows a rewatch badge once there's more than one; the
+  // caller passes it because counting means scanning watch history, which is far
+  // cheaper done once for a whole grid than per card.
+  playCount?: number
+  // Surface an indicator when the entry carries a review.
+  showReview?: boolean
   width?: number   // omit for fluid/grid usage; set explicitly for scroll rows
   showDates?: boolean
   // Extra context line under the title - the person page uses it for the role
@@ -49,7 +60,8 @@ function detectType(item: TMDbSearchResult, override?: MediaType): MediaType {
 
 export const MediaCard = memo(function MediaCard({
   item, entry: entryProp, mediaType: mediaTypeProp,
-  backLabel, onEdit, onDelete, onUndoRewatch, onUndrop, width, showDates, subtitle, className
+  backLabel, onEdit, onDelete, onUndoRewatch, onUndrop, onRemove, removeLabel,
+  playCount, showReview, width, showDates, subtitle, className
 }: MediaCardProps) {
   const navigate = useNavigate()
 
@@ -102,6 +114,10 @@ export const MediaCard = memo(function MediaCard({
   const justClosedModal = useRef(false)
 
   const hasLibraryActions = !!(onEdit || onDelete || onUndoRewatch || onUndrop)
+  // Both read the live entry, so they appear only for titles actually in the
+  // library - a list item that was never added has neither plays nor a review.
+  const showRewatchBadge = (playCount ?? 0) > 1
+  const showReviewBadge = !!showReview && !!entry?.review?.trim()
 
   const flagModalClose = () => {
     justClosedModal.current = true
@@ -192,9 +208,22 @@ export const MediaCard = memo(function MediaCard({
           </div>
         )}
 
-        {/* Library actions menu - top right (only in library mode). Mounted lazily on first hover. */}
-        {hasLibraryActions && menuMounted && (
-          <div className="absolute top-1.5 right-1.5 z-20 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
+        {/* Top-right hover actions: remove-from-container button, then the
+            library menu (mounted lazily on first hover). */}
+        {(onRemove || (hasLibraryActions && menuMounted)) && (
+          <div className="absolute top-1.5 right-1.5 z-20 flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
+            {onRemove && (
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                className="h-6 w-6 bg-black/50 hover:bg-destructive/80 text-white rounded-md"
+                onClick={(e) => { e.stopPropagation(); onRemove() }}
+                aria-label={removeLabel ?? 'Remove'}
+              >
+                <Trash2 className="h-3 w-3" />
+              </Button>
+            )}
+            {hasLibraryActions && menuMounted && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
                 <Button
@@ -232,6 +261,7 @@ export const MediaCard = memo(function MediaCard({
                 )}
               </DropdownMenuContent>
             </DropdownMenu>
+            )}
           </div>
         )}
 
@@ -288,6 +318,33 @@ export const MediaCard = memo(function MediaCard({
               </Button>
             </HoverTooltip>
           </div>
+
+          {/* Rewatch / review indicators. Their own row above the rating so a
+              card without them renders exactly as it did before. */}
+          {(showRewatchBadge || showReviewBadge) && (
+            <div className="flex items-center gap-1 mb-1">
+              {showRewatchBadge && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="inline-flex items-center gap-0.5 rounded-full bg-black/65 px-1.5 py-0.5 text-[10px] text-white">
+                      <Repeat2 className="h-2.5 w-2.5" /> {playCount}
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>{playCount} plays</TooltipContent>
+                </Tooltip>
+              )}
+              {showReviewBadge && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="inline-flex items-center justify-center rounded-full bg-black/65 px-1 py-0.5">
+                      <MessageSquare className="h-2.5 w-2.5 text-white" />
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>Has review</TooltipContent>
+                </Tooltip>
+              )}
+            </div>
+          )}
 
           {/* Always-visible info */}
           {entry?.userRating != null && (
