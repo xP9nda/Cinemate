@@ -1333,6 +1333,7 @@ const LogCard = React.memo(function LogCard({ entry, libEntry, ratingSystem, tim
   const title = libEntry?.title ?? entry.mediaId
   const displayRating = effectiveRating(libEntry, entry.episodeKey)
   const hasNote = !!entry.note?.trim()
+  const tags = entry.tags ?? []
   const isEpisode = !!entry.episodeKey
   const epLabel = entry.episodeKey ? `S${entry.episodeKey.split(':')[0]}E${entry.episodeKey.split(':')[1]}` : null
   // The top-left badge already shows SxEy; strip that prefix from the subtitle so it doesn't repeat
@@ -1407,7 +1408,7 @@ const LogCard = React.memo(function LogCard({ entry, libEntry, ratingSystem, tim
         )}
 
         <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black via-black/80 to-transparent pt-12 pb-2.5 px-2.5">
-          {(entry.isRewatch || hasNote) && (
+          {(entry.isRewatch || tags.length > 0 || hasNote) && (
             <div className="flex items-center gap-1 mb-1.5">
               {entry.isRewatch && (
                 <Tooltip>
@@ -1417,6 +1418,26 @@ const LogCard = React.memo(function LogCard({ entry, libEntry, ratingSystem, tim
                     </span>
                   </TooltipTrigger>
                   <TooltipContent>Rewatch</TooltipContent>
+                </Tooltip>
+              )}
+              {tags.length > 0 && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="inline-flex items-center gap-0.5 rounded-full bg-black/65 px-1.5 py-0.5 text-[10px] text-white">
+                      <Tag className="h-2.5 w-2.5" /> {tags.length}
+                    </span>
+                  </TooltipTrigger>
+                  {/* Same chips the list view uses, so a tag looks the same
+                      wherever it shows up. */}
+                  <TooltipContent className="max-w-56">
+                    <div className="flex flex-wrap gap-1">
+                      {tags.map((tag) => (
+                        <span key={tag} className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary">
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  </TooltipContent>
                 </Tooltip>
               )}
               {hasNote && (
