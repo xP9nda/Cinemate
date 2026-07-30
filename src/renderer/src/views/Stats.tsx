@@ -3,7 +3,7 @@ import ReactDOM from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { useStore } from '../lib/store'
 import { fmtRating, posterUrl, cn, ratingDateProxy, parseDateMs } from '../lib/utils'
-import { playMinutes } from '../lib/mediaStats'
+import { isSeen, playMinutes, watchedEpisodeCount } from '../lib/mediaStats'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, CartesianGrid, ReferenceLine,
@@ -149,7 +149,7 @@ export function Stats() {
   }
 
   const entries = useMemo(() => Object.values(library), [library])
-  const watched = useMemo(() => entries.filter(e => e.status === 'watched' || e.status === 'in_progress'), [entries])
+  const watched = useMemo(() => entries.filter(isSeen), [entries])
 
   const yearOptions = useMemo<(number | 'all')[]>(() => {
     const years = new Set<number>()
@@ -194,7 +194,7 @@ export function Stats() {
 
   const episodesWatched = useMemo(
     () => period === 'all'
-      ? entries.reduce((acc, e) => acc + Object.values(e.tvProgress ?? {}).filter(v => v.watchedAt).length, 0)
+      ? entries.reduce((acc, e) => acc + watchedEpisodeCount(e), 0)
       : periodHistory.filter(h => !!h.episodeKey).length,
     [entries, periodHistory, period]
   )

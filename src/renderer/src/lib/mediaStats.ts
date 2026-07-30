@@ -223,6 +223,35 @@ export async function computeEntryStats(entry: LibraryEntry): Promise<EntryStats
   }
 }
 
+/**
+ * Whether the user has actually seen a title: finished it, or is part-way
+ * through it. A watchlist entry has never been started, and a dropped one is
+ * deliberately left out so an abandoned show doesn't count the same as one that
+ * was watched.
+ *
+ * Every "how many have I seen" count reads through here. The Home quick stats
+ * used to count only `watched`, which hid every in-progress show: a library with
+ * 5 finished and 35 in-progress anime reported 5.
+ */
+export function isSeen(entry: Pick<LibraryEntry, 'status'>): boolean {
+  return entry.status === 'watched' || entry.status === 'in_progress'
+}
+
+/**
+ * Episodes of an entry carrying a watch marker.
+ *
+ * Counting `tvProgress` keys instead over-reports: the map is keyed by every
+ * episode the entry holds any data for, and a key outlives its play - removing
+ * the last play of an episode clears `watchedAt` but keeps the entry around for
+ * its rating and note. Only a set `watchedAt` means watched, which is how the
+ * Detail page and computeEntryStats have always read it.
+ */
+export function watchedEpisodeCount(entry: LibraryEntry): number {
+  let n = 0
+  for (const p of Object.values(entry.tvProgress ?? {})) if (p.watchedAt) n++
+  return n
+}
+
 /** Minutes left to watch for an entry, read from its denormalised stats (0 if untracked). */
 export function entryTimeRemaining(entry: LibraryEntry): number {
   const s = entry.runtimeStats

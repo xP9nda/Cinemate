@@ -4,7 +4,7 @@ import { TrendingUp, Clock, Tv, Bookmark, ArrowRight, Star } from 'lucide-react'
 import { getTrending } from '../lib/tmdb'
 import { useStore } from '../lib/store'
 import { cn, posterUrl, fmtDate, fmtRating, effectiveRating } from '../lib/utils'
-import { entryLastWatchedAt } from '../lib/mediaStats'
+import { entryLastWatchedAt, isSeen, watchedEpisodeCount } from '../lib/mediaStats'
 import { MediaCard, MediaCardSkeleton } from '../components/shared/MediaCard'
 import { ScrollableRow } from '../components/shared/ScrollableRow'
 import { ContinueWatchingCard } from '../components/shared/ContinueWatchingCard'
@@ -54,12 +54,15 @@ export function Home() {
       .finally(() => setLoading(false))
   }, [settings.apiKey])
 
+  // Counts of what the user has actually seen, so a show they're part-way
+  // through counts - matching the Stats page rather than only tallying titles
+  // marked fully watched.
   const libEntries = Object.values(library)
   const stats = {
-    movies: libEntries.filter((e) => e.mediaType === 'movie' && e.status === 'watched').length,
-    shows: libEntries.filter((e) => e.mediaType === 'tv' && e.status === 'watched').length,
-    anime: libEntries.filter((e) => e.mediaType === 'anime' && e.status === 'watched').length,
-    episodes: Object.values(library).reduce((acc, e) => acc + Object.keys(e.tvProgress ?? {}).length, 0)
+    movies: libEntries.filter((e) => e.mediaType === 'movie' && isSeen(e)).length,
+    shows: libEntries.filter((e) => e.mediaType === 'tv' && isSeen(e)).length,
+    anime: libEntries.filter((e) => e.mediaType === 'anime' && isSeen(e)).length,
+    episodes: libEntries.reduce((acc, e) => acc + watchedEpisodeCount(e), 0)
   }
 
   return (
