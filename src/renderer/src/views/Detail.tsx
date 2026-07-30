@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import {
   ArrowLeft, Star, Clock, Calendar, Tv, Bookmark, Plus, Check,
@@ -769,12 +769,12 @@ export function Detail() {
             {/* Note */}
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-muted-foreground">Note</label>
-              <Textarea
+              {/* Keyed per title so a pending draft can never land on the entry
+                  we navigate to next - the remount flushes it to the old one. */}
+              <NoteField
+                key={libId}
                 value={entry?.review ?? ''}
-                onChange={async (e) => { await setReview(target, e.target.value) }}
-                placeholder="Add a personal note..."
-                className="min-h-[60px] text-xs"
-                rows={2}
+                onCommit={(note) => { void setReview(target, note) }}
               />
             </div>
           </div>
@@ -1230,6 +1230,89 @@ export function Detail() {
         </DialogContent>
       </Dialog>
     </ScrollArea>
+  )
+}
+
+// How long typing has to pause before a note is written to the library.
+const NOTE_COMMIT_MS = 500
+
+/**
+ * Queue work to run only once the browser has painted. A note save is genuinely
+ * expensive - it has to recompute rule-driven lists, which can key off the
+ * review text (`hasReview`) - and running it straight out of a blur handler puts
+ * that work in the same frame as the focus ring being removed, so the ring
+ * visibly hangs around until the save finishes. rAF fires before the frame's
+ * paint, so the inner timeout is the first slot after it.
+ */
+function afterPaint(fn: () => void): void {
+  let done = false
+  const run = (): void => {
+    if (done) return
+    done = true
+    fn()
+  }
+  requestAnimationFrame(() => { setTimeout(run, 0) })
+  // rAF is frozen while the window is hidden or minimised, so back it with a
+  // deadline - otherwise a note saved just as the window goes away would sit
+  // unwritten until it comes back. Well past a frame, so rAF normally wins.
+  setTimeout(run, 100)
+}
+
+/**
+ * Note editor backed by a local draft. Writing on every keystroke ran the whole
+ * library write path per character - state clone, disk flush, runtime-stat
+ * refresh and an auto-list recompute over the entire library - and re-rendered
+ * this page each time, so typing lagged badly. Keeping the draft here means a
+ * keystroke only re-renders the textarea; the note is persisted once typing
+ * pauses, plus on blur and on unmount so nothing is lost mid-edit. Every save is
+ * handed to `afterPaint` so it never delays the frame that triggered it.
+ */
+function NoteField({ value, onCommit }: { value: string; onCommit: (note: string) => void }) {
+  const [draft, setDraft] = useState(value)
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Last rendered props/draft, so a debounced or unmount flush never fires a
+  // stale value.
+  const latest = useRef({ draft, value, onCommit })
+  useEffect(() => { latest.current = { draft, value, onCommit } })
+  // Text most recently handed to onCommit. Checked alongside `value` because a
+  // queued save hasn't reached the store yet, so a blur landing in that gap
+  // would otherwise run the same expensive write a second time.
+  const sent = useRef(value)
+
+  const flush = useCallback(() => {
+    if (timer.current) {
+      clearTimeout(timer.current)
+      timer.current = null
+    }
+    const { draft: d, value: v, onCommit: commit } = latest.current
+    if (d === v || d === sent.current) return
+    sent.current = d
+    afterPaint(() => commit(d))
+  }, [])
+
+  // Pick up edits made elsewhere (the edit sheet, an import) without ever
+  // clobbering a draft the user is still typing.
+  useEffect(() => {
+    if (timer.current) return
+    setDraft(value)
+  }, [value])
+
+  // Covers navigating away, or switching titles, mid-edit.
+  useEffect(() => flush, [flush])
+
+  return (
+    <Textarea
+      value={draft}
+      onChange={(e) => {
+        setDraft(e.target.value)
+        if (timer.current) clearTimeout(timer.current)
+        timer.current = setTimeout(flush, NOTE_COMMIT_MS)
+      }}
+      onBlur={flush}
+      placeholder="Add a personal note..."
+      className="min-h-[60px] text-xs"
+      rows={2}
+    />
   )
 }
 
